@@ -337,3 +337,161 @@ class TestModelRegistry:
             estimator = MODEL_REGISTRY[key]["factory"](1)
             weights = getattr(estimator, "class_weight", None)
             assert weights == "balanced", f"{key} does not handle class imbalance"
+
+
+class TestTemporalSplit:
+    """A temporal holdout must never leak a year across the split boundary.
+
+    Added after an audit found the reported metrics were measured under a
+    stratified random split, which mixes reporting regimes: severity 3 falls
+    from 32.8% of 2016 to 0% of 2023, and severity 1 exists in bulk only in
+    2020 and 2022. A random split lets the model score well by recognising the
+    regime, so the temporal path exists to measure what actually generalises.
+    """
+
+    @pytest.fixture
+    def yearly(self, tmp_path, monkeypatch):
+        """A synthetic table spanning 2016-2023 with a known per-year mix."""
+        import pandas as pd
+
+        from smart_traffic import config as config_module
+        from smart_traffic.ingestion import build_from_csv
+
+        monkeypatch.setenv("STA_DATA_DIR", str(tmp_path / "data"))
+        monkeypatch.setenv("STA_MODELS_DIR", str(tmp_path / "models"))
+        monkeypatch.setenv("STA_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
+        monkeypatch.setenv("STA_LOG_DIR", str(tmp_path / "logs"))
+        config_module.PATHS.ensure_dirs()
+
+        rows = []
+        for year, severities in (
+            (2016, [2, 2, 3, 3, 4]), (2017, [2, 3, 3, 4]),
+            (2018, [2, 2, 3, 4, 4]), (2019, [2, 3, 4, 4]),
+            (2020, [1, 2, 2, 3, 4]), (2021, [2, 2, 2, 4]),
+            (2022, [1, 2, 2, 2, 4]), (2023, [2, 2, 2, 4]),
+        ):
+            for severity in severities:
+                rows.append((year, severity))
+        frame = pd.DataFrame(
+            {
+                "ID": [f"T{i:04d}" for i in range(len(rows))],
+                "Severity": [s for _y, s in rows],
+                "Year": [y for y, _s in rows],
+                "Start_Time": [
+                    f"{y}-06-15 08:00:00.000000" for y, _s in rows
+                ],
+                "End_Time": [f"{y}-06-15 08:30:00.000000" for y, _s in rows],
+                "Start_Lat": [40.0 + i * 0.01 for i in range(len(rows))],
+                "Start_Lng": [-75.0 - i * 0.01 for i in range(len(rows))],
+                "End_Lat": [40.0 + i * 0.01 for i in range(len(rows))],
+                "End_Lng": [-75.0 - i * 0.01 for i in range(len(rows))],
+            }
+        )
+        csv_path = tmp_path / "yearly.csv"
+        frame.to_csv(csv_path, index=False)
+        build_from_csv(csv_path, config_module.PATHS.accidents_parquet,
+                       method="chunked", chunk_size=11)
+
+        import smart_traffic.db as db_module
+
+        handle = db_module.Database(
+            db_path=tmp_path / "yearly.duckdb",
+            parquet_path=config_module.PATHS.accidents_parquet,
+        )
+        monkeypatch.setattr(db_module, "DB", handle)
+        return handle
+
+    @staticmethod
+    def _config(**overrides: object) -> TrainingConfig:
+        base = {
+            "sample_rows": 100,
+            "split_strategy": "temporal",
+            "train_years": (2016, 2017, 2018, 2019),
+            "test_years": (2021, 2022, 2023),
+        }
+        base.update(overrides)
+        return TrainingConfig(**base)
+
+    def test_train_and_test_years_are_disjoint(self, yearly):
+        from smart_traffic.modeling import load_training_data, split_data
+
+        config = self._config()
+        x_train, x_test, _y_train, _y_test = split_data(
+            load_training_data(config), config
+        )
+        train_years = {int(v) for v in x_train["Year"].unique()}
+        test_years = {int(v) for v in x_test["Year"].unique()}
+        assert train_years, "training side must be non-empty"
+        assert test_years, "test side must be non-empty"
+        assert not train_years & test_years
+        assert train_years <= set(config.train_years)
+        assert test_years <= set(config.test_years)
+
+    def test_index_overlap_is_empty(self, yearly):
+        from smart_traffic.modeling import load_training_data, split_data
+
+        config = self._config()
+        x_train, x_test, _y, _y2 = split_data(load_training_data(config), config)
+        assert not set(x_train.index) & set(x_test.index)
+
+    def test_years_are_carried_then_dropped_when_not_a_feature(self, yearly):
+        """Year may be needed to split without becoming a predictor."""
+        from smart_traffic.modeling import load_training_data, split_data
+
+        base = TrainingConfig(sample_rows=100)
+        config = self._config(
+            numeric_features=tuple(f for f in base.numeric_features if f != "Year")
+        )
+        x_train, x_test, _y, _y2 = split_data(load_training_data(config), config)
+        assert "Year" not in x_train.columns
+        assert "Year" not in x_test.columns
+
+    def test_year_is_kept_when_it_is_a_declared_feature(self, yearly):
+        from smart_traffic.modeling import load_training_data, split_data
+
+        config = self._config()
+        x_train, _x_test, _y, _y2 = split_data(load_training_data(config), config)
+        assert "Year" in x_train.columns
+
+    def test_overlapping_years_are_rejected(self, yearly):
+        from smart_traffic.modeling import load_training_data, split_data
+
+        config = self._config(train_years=(2016, 2017, 2022),
+                              test_years=(2021, 2022, 2023))
+        with pytest.raises(ValueError, match="disjoint"):
+            split_data(load_training_data(config), config)
+
+    def test_missing_year_sets_are_rejected(self, yearly):
+        from smart_traffic.modeling import load_training_data, split_data
+
+        config = self._config(train_years=None)
+        with pytest.raises(ValueError, match="train_years and test_years"):
+            split_data(load_training_data(config), config)
+
+    def test_unknown_test_year_is_rejected(self, yearly):
+        from smart_traffic.modeling import load_training_data, split_data
+
+        config = self._config(test_years=(2099,))
+        with pytest.raises(ValueError, match="No test rows"):
+            split_data(load_training_data(config), config)
+
+    def test_random_split_is_unaffected(self, yearly):
+        """The default path must keep its stratified random behaviour."""
+        from smart_traffic.modeling import load_training_data, split_data
+
+        config = TrainingConfig(sample_rows=34, test_fraction=0.25, seed=42)
+        x_train, x_test, y_train, y_test = split_data(
+            load_training_data(config), config
+        )
+        assert len(x_train) + len(x_test) == 34
+        assert not set(x_train.index) & set(x_test.index)
+        assert set(y_train.unique()) == set(y_test.unique())
+        assert {int(v) for v in x_train["Year"]} & {int(v) for v in x_test["Year"]}
+
+    def test_default_strategy_is_random(self):
+        assert TrainingConfig().split_strategy == "random"
+
+    def test_random_split_needs_no_year_configuration(self):
+        config = TrainingConfig()
+        assert config.train_years is None
+        assert config.test_years is None

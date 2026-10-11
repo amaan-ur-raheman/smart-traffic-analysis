@@ -162,6 +162,15 @@ class TrainingConfig:
     tune_thresholds: bool = True
     numeric_features: tuple[str, ...] = DEFAULT_NUMERIC_FEATURES
     categorical_features: tuple[str, ...] = DEFAULT_CATEGORICAL_FEATURES
+    #: ``"random"`` for a stratified split, ``"temporal"`` for a calendar-year
+    #: holdout. The random split is the default because it is what the reported
+    #: model comparison uses; the temporal split exists to test whether those
+    #: numbers survive contact with a later, slightly different period.
+    split_strategy: str = "random"
+    #: Calendar years used for training when ``split_strategy="temporal"``.
+    train_years: tuple[int, ...] | None = None
+    #: Calendar years held out for testing when ``split_strategy="temporal"``.
+    test_years: tuple[int, ...] | None = None
 
     def all_features(self) -> list[str]:
         """Return the combined predictor list."""
@@ -445,9 +454,25 @@ def load_training_data(
     from smart_traffic.sampling import draw_sample
 
     columns = ["ID", *config.all_features(), schema.SEVERITY]
+    if config.split_strategy == "temporal" and "Year" not in columns:
+        # Year is needed to decide the split even when it is not a predictor;
+        # `split_data` drops it alongside every other non-feature column.
+        columns = ["ID", "Year", *columns[1:]]
+    # A temporal run must not sample across all years and only then split, or
+    # earlier years would land in the test set. Restrict the draw to the union
+    # of both periods so the split itself decides which rows are held out.
+    if config.split_strategy == "temporal":
+        if not config.train_years or not config.test_years:
+            raise ValueError(
+                "A temporal split needs both train_years and test_years to be set."
+            )
+        years = tuple(sorted({*config.train_years, *config.test_years}))
+    else:
+        years = None
+    spec = FilterSpec(years=years) if years else FilterSpec()
     draw = draw_sample(
         columns,
-        spec=FilterSpec(),
+        spec=spec,
         limit=config.sample_rows,
         seed=config.seed,
         db=db,
@@ -460,7 +485,18 @@ def split_data(
     frame: pd.DataFrame,
     config: TrainingConfig,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
-    """Split into stratified train and test sets.
+    """Split into train and test sets.
+
+    Two strategies, selected by ``config.split_strategy``:
+
+    ``"random"``
+        A stratified random split. Every model in this project is reported under
+        this, and it is the right default for a like-for-like model comparison.
+    ``"temporal"``
+        Train on ``config.train_years`` and test on ``config.test_years``. This
+        is the honest test of whether the model learned something durable rather
+        than the quirks of a particular date range, because no test record can
+        share a year with a training record.
 
     Stratification matters here: with severity 1 at under 1% of the data, an
     unstratified split could leave the test set with too few rare-class examples
@@ -468,13 +504,14 @@ def split_data(
 
     Args:
         frame: Rows containing features and ``Severity``.
-        config: Supplies the split fraction and seed.
+        config: Supplies the split fraction, seed and strategy.
 
     Returns:
         ``(X_train, X_test, y_train, y_test)``.
 
     Raises:
-        ValueError: If the frame is empty or the target is missing.
+        ValueError: If the frame is empty, the target is missing, or the
+            requested temporal years yield no train or test rows.
     """
     from sklearn.model_selection import train_test_split
 
@@ -485,6 +522,12 @@ def split_data(
 
     features = config.all_features()
     present = [f for f in features if f in frame.columns]
+    if config.split_strategy == "temporal" and "Year" not in present:
+        # Needed to partition by period; removed again once the split is made.
+        present = [*present, "Year"]
+        year_is_predictor = False
+    else:
+        year_is_predictor = "Year" in present
     if len(present) < len(features):
         missing = [f for f in features if f not in frame.columns]
         logger.warning("Dropping %s absent feature(s): %s", len(missing), ", ".join(missing))
@@ -494,6 +537,15 @@ def split_data(
     keep = y.notna()
     x, y = x[keep], y[keep].astype(int)
 
+    if config.split_strategy == "temporal":
+        x_train, x_test, y_train, y_test = _temporal_split(x, y, config)
+        if not year_is_predictor:
+            # Year was carried only to decide the split; it is not a predictor
+            # in this configuration, so it must not leak into the fitted model.
+            x_train = x_train.drop(columns=["Year"], errors="ignore")
+            x_test = x_test.drop(columns=["Year"], errors="ignore")
+        return x_train, x_test, y_train, y_test
+
     stratify = y if y.value_counts().min() >= 2 else None
     return train_test_split(
         x, y,
@@ -501,6 +553,46 @@ def split_data(
         random_state=config.seed,
         stratify=stratify,
     )
+
+
+def _temporal_split(
+    x: pd.DataFrame,
+    y: pd.Series,
+    config: TrainingConfig,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """Split on calendar year so train and test periods cannot overlap."""
+    train_years = tuple(config.train_years or ())
+    test_years = tuple(config.test_years or ())
+    if not train_years or not test_years:
+        raise ValueError(
+            "A temporal split needs both train_years and test_years to be set."
+        )
+    overlap = set(train_years) & set(test_years)
+    if overlap:
+        raise ValueError(
+            f"Temporal split has years in both sets: {sorted(overlap)}. Train and "
+            "test periods must be disjoint or the split is not temporal."
+        )
+    if "Year" not in x.columns:
+        raise ValueError(
+            "A temporal split needs the 'Year' column, which is not in the "
+            "modelling frame."
+        )
+
+    years = pd.to_numeric(x["Year"], errors="coerce")
+    in_train = years.isin(train_years)
+    in_test = years.isin(test_years)
+    if not in_train.any():
+        raise ValueError(f"No training rows in years {sorted(train_years)}.")
+    if not in_test.any():
+        raise ValueError(f"No test rows in years {sorted(test_years)}.")
+
+    logger.info(
+        "Temporal split: train %s (%d rows) -> test %s (%d rows)",
+        f"{min(train_years)}-{max(train_years)}", int(in_train.sum()),
+        f"{min(test_years)}-{max(test_years)}", int(in_test.sum()),
+    )
+    return x[in_train], x[in_test], y[in_train], y[in_test]
 
 
 def train_models(

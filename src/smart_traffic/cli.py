@@ -77,6 +77,23 @@ def cmd_sample(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_years(value: str | None) -> tuple[int, ...] | None:
+    """Parse a ``--train-years 2016-2021`` style argument."""
+    if not value:
+        return None
+    years: list[int] = []
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start, stop = part.split("-", 1)
+            years.extend(range(int(start), int(stop) + 1))
+        else:
+            years.append(int(part))
+    return tuple(sorted(set(years))) or None
+
+
 def cmd_train(args: argparse.Namespace) -> int:
     """Train the severity models and persist them."""
     from smart_traffic.db import DB
@@ -96,8 +113,21 @@ def cmd_train(args: argparse.Namespace) -> int:
     config = TrainingConfig(
         sample_rows=args.rows,
         selected_models=tuple(models),
+        split_strategy="temporal" if args.temporal else "random",
+        train_years=_parse_years(args.train_years),
+        test_years=_parse_years(args.test_years),
     )
 
+    if config.split_strategy == "temporal":
+        print(
+            "Temporal holdout: training on "
+            f"{min(config.train_years)}-{max(config.train_years)}, testing on "
+            f"{min(config.test_years)}-{max(config.test_years)}."
+        )
+        print(
+            "Note: severity prevalence shifts sharply across years in this dataset, "
+            "so these scores are expected to sit well below the random-split figures."
+        )
     print(
         f"Training {len(config.selected_models)} model(s) "
         f"on up to {config.sample_rows:,} rows..."
@@ -222,10 +252,22 @@ def build_parser() -> argparse.ArgumentParser:
     train = subparsers.add_parser("train", help="Train and persist the severity models")
     train.add_argument("--rows", type=int, default=SETTINGS.sample_training_rows)
     train.add_argument(
-        "--models", help="Comma-separated model keys (default: all three)"
+        "--models", help="Comma-separated model keys (default: all four)"
     )
     train.set_defaults(func=cmd_train)
 
+    train.add_argument(
+        "--temporal",
+        action="store_true",
+        help="Hold out whole calendar years instead of a random split. "
+             "Requires --train-years and --test-years.",
+    )
+    train.add_argument(
+        "--train-years", help="e.g. 2016-2021 or 2016,2017,2018"
+    )
+    train.add_argument(
+        "--test-years", help="e.g. 2022-2023"
+    )
     validate = subparsers.add_parser("validate", help="Print the data-quality report")
     validate.add_argument("--missing", action="store_true",
         help="Include the missing-value profile")
