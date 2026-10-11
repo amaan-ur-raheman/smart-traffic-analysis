@@ -406,6 +406,31 @@ The honest summary: these models predict **how severity was recorded in a given
 reporting era**, not how severe a crash physically was. Neither figure should be
 presented as a forecast.
 
+### Can severity 4 be improved? No — not without destroying precision
+
+Severity 4 has the weakest F1 (0.300), so it is worth asking whether the decision
+threshold can simply be loosened to catch more of it. Sweeping the severity-4
+multiplier on the gradient-boosting model (multipliers for the other classes held
+at 1.0, so read the *shape* of the curve rather than the absolute level):
+
+| Severity-4 multiplier | Macro F1 | Precision | Recall | F1 | Predicted S4 | Actual S4 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.7 (default region) | 0.4953 | 0.162 | 0.616 | 0.257 | 8,029 | 2,111 |
+| 1.0 | 0.4826 | 0.137 | 0.713 | 0.229 | 11,005 | 2,111 |
+| 2.0 | 0.4555 | 0.103 | 0.848 | 0.183 | 17,455 | 2,111 |
+| 5.0 | 0.4178 | 0.073 | 0.920 | 0.135 | 26,731 | 2,111 |
+
+Recall climbs from 0.616 to 0.920, but precision falls from 0.162 to 0.073 and F1
+*decreases*. At 5× the model flags 26,731 accidents to catch the 2,111 that are
+genuinely severity 4 — roughly twelve false alarms per true detection, which is
+useless in any operational sense.
+
+So the model cannot separate severity 4 from severity 2 using the features
+available. The shipped threshold sits near the best point on this curve, and no
+reweighting recovers a usable operating point. This is a property of the data,
+not an untuned model: severity 4 accounts for 2.6% of records and carries no
+signal in weather, road features or timing that reliably separates it.
+
 **The three headline metrics disagree about which model is best.** Macro F1 and balanced
 accuracy reward opposite ends of the same precision/recall dial on a target this imbalanced,
 so no model wins on all three. The Model Evaluation page lets you choose which metric selects
