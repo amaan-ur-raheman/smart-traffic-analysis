@@ -142,12 +142,20 @@ class IngestionReport:
         return self.rows_written - self.invalid_records
 
     def to_dataframe(self) -> pd.DataFrame:
-        """Return the report as a two-column DataFrame."""
+        """Return the report as a two-column DataFrame.
+
+        Every ``Value`` is stringified. The column mixes paths, counts and
+        rounded floats, which pandas stores as ``object``; pyarrow refuses to
+        serialise a heterogeneous object column, so ``st.dataframe`` would fall
+        back to coercion and log a traceback on every render. Stringifying is
+        what :meth:`ValidationReport.to_dataframe` already does for the same
+        reason.
+        """
         return pd.DataFrame(
             [
-                {"Field": "Source file", "Value": self.source},
-                {"Field": "Output file", "Value": self.output},
-                {"Field": "Method", "Value": self.method},
+                {"Field": "Source file", "Value": str(self.source)},
+                {"Field": "Output file", "Value": str(self.output)},
+                {"Field": "Method", "Value": str(self.method)},
                 {"Field": "Source size (MB)", "Value": round(self.source_bytes / 1e6, 2)},
                 {"Field": "Rows read", "Value": self.rows_read},
                 {"Field": "Rows written", "Value": self.rows_written},
@@ -158,7 +166,8 @@ class IngestionReport:
                 {"Field": "Unparsed start timestamps", "Value": self.unparsed_start_time},
                 {"Field": "Output size (MB)", "Value": round(self.output_bytes / 1e6, 2)},
                 {"Field": "Elapsed seconds", "Value": round(self.seconds, 1)},
-            ]
+            ],
+            dtype=str,
         )
 
 
@@ -751,16 +760,21 @@ class SampleInfo:
         return round(self.rows / self.population * 100, 3) if self.population else 0.0
 
     def to_dataframe(self) -> pd.DataFrame:
-        """Return the sample provenance as a two-column DataFrame."""
+        """Return the sample provenance as a two-column DataFrame.
+
+        Values are stringified so the frame is safe to pass to
+        ``st.dataframe``; see :meth:`IngestionReport.to_dataframe`.
+        """
         return pd.DataFrame(
             [
-                {"Field": "Sample rows", "Value": self.rows},
-                {"Field": "Requested rows", "Value": self.requested},
-                {"Field": "Population rows", "Value": self.population},
-                {"Field": "Coverage (%)", "Value": self.coverage_percent},
-                {"Field": "Random seed", "Value": self.seed},
-                {"Field": "File", "Value": self.path},
-            ]
+                {"Field": "Sample rows", "Value": str(self.rows)},
+                {"Field": "Requested rows", "Value": str(self.requested)},
+                {"Field": "Population rows", "Value": str(self.population)},
+                {"Field": "Coverage (%)", "Value": str(self.coverage_percent)},
+                {"Field": "Random seed", "Value": str(self.seed)},
+                {"Field": "File", "Value": str(self.path)},
+            ],
+            dtype=str,
         )
 
 

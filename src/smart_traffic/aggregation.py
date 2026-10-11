@@ -235,6 +235,40 @@ class Aggregator:
 
     # -- generic helpers ---------------------------------------------------
 
+    def require_columns(self, *columns: str) -> None:
+        """Validate that ``columns`` exist in the processed table.
+
+        Without this, a typo reaches DuckDB and surfaces as a BinderException
+        listing dozens of candidate column names. That is unfriendly for anyone
+        adding a page, and easy to mistake for a data problem when it is really
+        a code problem.
+
+        Args:
+            columns: Column names to check.
+
+        Raises:
+            ValueError: If any column is absent from the accidents view.
+        """
+        from smart_traffic.db import DB
+
+        if not columns:
+            return
+        # The DESCRIBE needs the view to exist first; counts_by may be the very
+        # first query issued against a freshly opened handle.
+        DB.ensure_views()
+        available = {
+            str(row[0])
+            for row in DB.connection.execute(
+                f"DESCRIBE {ACCIDENTS_VIEW}"
+            ).fetchall()
+        }
+        missing = [c for c in columns if c not in available]
+        if missing:
+            raise ValueError(
+                f"Unknown column(s): {', '.join(missing)}. "
+                f"Available: {', '.join(sorted(available))}"
+            )
+
     def total(self, spec: FilterSpec | None = None) -> int:
         """Return the number of records matching ``spec``."""
         spec = spec or FilterSpec()
@@ -269,6 +303,7 @@ class Aggregator:
             Rows whose grouping value is NULL are excluded.
         """
         spec = spec or FilterSpec()
+        self.require_columns(column)
         order = "Accidents DESC, 1" if order_desc else f'"{column}"'
         sql = f"""
             SELECT "{column}" AS "{column}", COUNT(*)::BIGINT AS Accidents

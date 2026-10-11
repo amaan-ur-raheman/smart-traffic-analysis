@@ -6,6 +6,8 @@ strategies, and reproducibility of the sampling used for expensive analysis.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -313,3 +315,89 @@ class TestPCAVarianceThreshold:
     def test_threshold_met_exactly_is_reached(self):
         result = self._result([50.0, 80.0])
         assert variance_threshold_components(result, 0.80) == 2
+
+
+class TestReportFramesSerialise:
+    """Report frames must survive being handed to st.dataframe.
+
+    Regression tests. Both frames put paths, counts and rounded floats into a
+    single ``Value`` column, which pandas stores as ``object``. pyarrow refuses
+    a heterogeneous object column, so Streamlit logged a full ArrowTypeError
+    traceback on render and silently coerced the types. The Methodology page had
+    the same defect via a bare int in an otherwise-str column.
+    """
+
+    @staticmethod
+    def _assert_arrow_safe(frame) -> None:
+        import pyarrow as pa
+
+        pa.Table.from_pandas(frame, preserve_index=False)  # must not raise
+        assert not frame.isna().all(axis=1).any(), "no all-null rows"
+
+    def test_ingestion_report_frame_is_arrow_safe(self, tmp_path: Path) -> None:
+        from smart_traffic.ingestion import IngestionReport
+
+        report = IngestionReport(
+            source=tmp_path / "US_Accidents_March23.csv",
+            output=tmp_path / "accidents.parquet",
+            method="chunked",
+            source_bytes=3_058_183_727,
+            rows_read=7_728_394,
+            rows_written=7_728_394,
+            invalid_severity=0,
+            invalid_coordinates=0,
+            invalid_records=0,
+            unparsed_start_time=0,
+            output_bytes=412_917_735,
+            seconds=84.7,
+        )
+        frame = report.to_dataframe()
+        self._assert_arrow_safe(frame)
+        assert set(frame["Value"].map(type)) <= {str}
+
+    def test_sample_info_frame_is_arrow_safe(self, tmp_path: Path) -> None:
+        from smart_traffic.ingestion import SampleInfo
+
+        info = SampleInfo(
+            rows=400_000,
+            requested=400_000,
+            population=7_728_394,
+            seed=42,
+            path=tmp_path / "sample.parquet",
+        )
+        frame = info.to_dataframe()
+        self._assert_arrow_safe(frame)
+        assert set(frame["Value"].map(type)) <= {str}
+
+    def test_validation_report_frame_is_arrow_safe(self) -> None:
+        """The same guarantee for the data-quality report."""
+        from smart_traffic.validation import ValidationReport
+
+        report = ValidationReport(source="test")
+        report.add("Total records", 7_728_394, "pass", "", 7_728_394)
+        report.add("Coverage end", "2023-03-31 23:30:00", "info")
+        self._assert_arrow_safe(report.to_dataframe())
+
+    def test_counts_by_rejects_an_unknown_column_with_a_clear_error(
+        self, processed_table
+    ) -> None:
+        """A typo should not surface as a raw DuckDB BinderException."""
+        import pytest as _pytest
+
+        from smart_traffic.aggregation import Aggregator
+
+        aggregator = Aggregator()
+        with _pytest.raises(ValueError, match="Unknown column"):
+            aggregator.counts_by("Road_Type")
+        # The message must name the column and list what is available.
+        with _pytest.raises(ValueError) as caught:
+            aggregator.counts_by("Side")
+        assert "Side" in str(caught.value)
+        assert "Available" in str(caught.value)
+
+    def test_counts_by_still_accepts_real_columns(self, processed_table) -> None:
+        from smart_traffic.aggregation import Aggregator
+
+        aggregator = Aggregator()
+        assert not aggregator.counts_by("State").empty
+        assert not aggregator.counts_by("Severity").empty
