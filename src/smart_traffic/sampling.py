@@ -109,7 +109,9 @@ def draw_sample(
     row_cap = limit if limit is not None else SETTINGS.sample_scatter_points
 
     population = int(
-        spec.select(f"SELECT COUNT(*) AS n FROM {source_table}", handle)["n"][0]
+        spec.select(
+            f"SELECT COUNT(*) AS n FROM {source_table} WHERE {{where}}", handle
+        )["n"][0]
     )
 
     projection = ", ".join(f'"{c}"' for c in columns)

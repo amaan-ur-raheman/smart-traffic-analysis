@@ -154,18 +154,37 @@ class FilterSpec:
 
         Args:
             query: SQL using ``{where}`` and ``{params}`` placeholders.
+                ``{where}`` must appear *before* any other ``?`` placeholder,
+                because the filter's bound values are prepended.
             db: Optional database handle.
             params: Extra parameters the query itself needs.
 
         Returns:
-            Query results as a DataFrame.
+            Query results as a pandas DataFrame.
+
+        Raises:
+            ValueError: If the number of supplied parameters does not match the
+                number of placeholders in the assembled query. This almost
+                always means ``{where}`` was positioned after a ``?``, which
+                would otherwise bind the filter values to the wrong arguments
+                and return silently wrong rows.
         """
         from smart_traffic.db import DB
 
         handle = db or DB
         clause, filter_params = self.where_clause()
-        full_params = list(params or []) + filter_params
+        # Filter values are prepended because `{where}` is substituted into the
+        # leading WHERE clause, ahead of any placeholder the query itself adds.
+        full_params = [*filter_params, *(params or [])]
         sql = query.format(where=clause or "TRUE")
+        expected = sql.count("?")
+        if expected != len(full_params):
+            raise ValueError(
+                f"Parameter count mismatch: the assembled query has {expected} "
+                f"placeholder(s) but {len(full_params)} value(s) were supplied. "
+                "Place {where} before any other '?' placeholder so the filter's "
+                "bound values come first."
+            )
         return handle.sql(sql, full_params)
 
 
