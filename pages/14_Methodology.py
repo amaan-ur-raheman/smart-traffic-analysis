@@ -35,6 +35,7 @@ from smart_traffic.ui import (
     page_header,
     require_dataset,
     section,
+    severity_regime_warning,
     sidebar_header,
 )
 from smart_traffic.visualizations import workflow_diagram
@@ -290,7 +291,11 @@ LIMITATIONS = [
 for title, body in LIMITATIONS:
     st.markdown(f"**{title}.** {body}")
 
-# -- reproducibility -------------------------------------------------------
+# -- validation protocol ---------------------------------------------------
+st.markdown("---")
+section("How the models are validated, and what that does not prove")
+severity_regime_warning()
+
 st.markdown("---")
 section("Reproducibility")
 st.dataframe(

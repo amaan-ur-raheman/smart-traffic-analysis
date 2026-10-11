@@ -500,6 +500,61 @@ def executive_summary(
     return "\n".join(lines)
 
 
+def severity_prevalence_by_year(spec: FilterSpec | None = None) -> pd.DataFrame:
+    """Per-year share of each severity category.
+
+    Exists because the mix shifts far more across years than any weather or
+    road condition does, and a model that sees ``Year`` can score well simply by
+    recognising which reporting regime a record came from. Callers use this to
+    show the shift rather than assert it.
+
+    Args:
+        spec: Active filters.
+
+    Returns:
+        DataFrame with ``Year``, ``Accidents`` and one percentage column per
+        severity level, ordered by year. Empty when no data is available.
+    """
+    from smart_traffic import schema
+    from smart_traffic.aggregation import Aggregator
+    from smart_traffic.aggregation import FilterSpec as _Spec
+
+    aggregator = Aggregator()
+    base = spec or _Spec()
+    years = _year_list(base)
+    if not years:
+        return pd.DataFrame()
+
+    rows = []
+    for year in years:
+        counts = aggregator.severity_counts(_Spec(years=[year], **_passthrough(base)))
+        if counts.empty:
+            continue
+        by_severity = dict(zip(counts["Severity"], counts["Accidents"], strict=False))
+        total = int(sum(by_severity.values()))
+        if total == 0:
+            continue
+        row: dict[str, Any] = {"Year": int(year), "Accidents": total}
+        for level in schema.SEVERITY_LEVELS:
+            row[f"Severity_{level}_%"] = round(
+                100.0 * int(by_severity.get(level, 0)) / total, 2
+            )
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _passthrough(spec: FilterSpec) -> dict[str, Any]:
+    """Carry the non-year filters onto a per-year FilterSpec."""
+    return {
+        "states": spec.states,
+        "cities": spec.cities,
+        "severities": spec.severities,
+        "months": spec.months,
+        "hours": spec.hours,
+        "day_types": spec.day_types,
+    }
+
+
 def filter_impact(spec: FilterSpec) -> pd.DataFrame:
     """Describe which filters are active, for the sidebar summary.
 

@@ -472,6 +472,65 @@ def methodology_notes(*, include_severity: bool = True, include_exposure: bool =
         st.markdown(f"- {rush_hour_definition_text()}")
 
 
+def severity_regime_warning() -> None:
+    """Warn that severity prevalence shifts across years, with the evidence.
+
+    The mix moves far more between years than any weather or road factor does:
+    severity 3 falls from about 33% of 2016-2018 to none at all in 2023, while
+    severity 1 appears in bulk only in 2020 and 2022. A model carrying ``Year``
+    can therefore score well by recognising the reporting convention rather
+    than the incident, and a random split hides that because it mixes regimes.
+
+    Any page reporting model performance needs this caveat, so it lives here
+    rather than being retyped per page.
+    """
+    from smart_traffic.analytics import severity_prevalence_by_year
+
+    try:
+        frame = severity_prevalence_by_year()
+    except Exception:  # noqa: BLE001 - the caveat must never break a page
+        return
+    if frame.empty or len(frame) < 2:
+        return
+
+    early = frame["Severity_3_%"].iloc[0]
+    late = frame["Severity_3_%"].iloc[-1]
+    vanished = early > 5.0 and late == 0.0
+
+    with st.expander(
+        "Severity is not recorded consistently across years — this limits the models",
+        expanded=False,
+    ):
+        st.warning(
+            "The severity field reflects a reporting convention that changed over "
+            "time, not a stable physical property of the accidents. Severity 3 "
+            f"falls from {early:.1f}% of records in {int(frame['Year'].iloc[0])} to "
+            f"{late:.1f}% in {int(frame['Year'].iloc[-1])}"
+            + (
+                " — it does not appear at all in the final year."
+                if vanished
+                else "."
+            ),
+            icon="⚠️",
+        )
+        st.markdown(
+            "Two consequences worth stating plainly:\n\n"
+            "- **A random split flatters the models.** Because it mixes reporting "
+            "regimes, a model carrying `Year` can partly recognise which convention "
+            "a record was logged under. Reported scores should be read that way.\n"
+            "- **A temporal holdout is much harsher.** Training on 2016-2021 and "
+            "testing on 2022-2023 drops macro F1 from roughly 0.58 to roughly "
+            "0.40 for the gradient-boosting model. Reproduce it with:\n\n"
+            "```bash\nuv run sta train --temporal \\\n"
+            "  --train-years 2016-2021 --test-years 2022-2023\n```\n\n"
+            "Neither figure is a forecast of future accidents. They describe how "
+            "severity was recorded, which is a property of the data rather than "
+            "of the crash."
+        )
+        st.dataframe(frame, width="stretch", hide_index=True)
+        st.caption("Share of each year's records by severity, computed from the loaded dataset.")
+
+
 def download_table(
     frame: pd.DataFrame,
     label: str,

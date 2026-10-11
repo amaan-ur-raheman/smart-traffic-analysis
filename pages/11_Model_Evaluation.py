@@ -28,6 +28,7 @@ from smart_traffic.ui import (
     page_header,
     require_dataset,
     section,
+    severity_regime_warning,
     sidebar_header,
 )
 from smart_traffic.visualizations import bar_chart, confusion_matrix_heatmap
@@ -153,6 +154,7 @@ elif not table["Recommended"].any():
     )
 
 # -- selection -------------------------------------------------------------
+severity_regime_warning()
 section("Model selection")
 eligible = {
     key: entry for key, entry in summary.items()

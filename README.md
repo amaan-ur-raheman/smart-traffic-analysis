@@ -349,6 +349,63 @@ Per-class, for the recommended model:
 | 3 | 0.511 | 0.682 | 0.585 | 13,568 |
 | 4 | 0.272 | 0.334 | 0.300 | 2,111 |
 
+### These numbers are optimistic, and here is why
+
+**Severity is not recorded consistently across the years.** The share of records at
+each level moves far more between years than any weather or road factor does:
+
+| Year | Records | Sev 1 | Sev 2 | Sev 3 | Sev 4 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 2016 | 410,821 | 0.05% | 65.73% | 30.72% | 3.49% |
+| 2018 | 893,426 | 0.03% | 64.32% | 32.76% | 2.89% |
+| 2020 | 1,178,913 | 2.41% | 79.24% | 15.72% | 2.64% |
+| 2021 | 1,563,753 | 0.01% | 88.55% | 9.47% | 1.98% |
+| 2022 | 1,762,452 | 2.15% | 90.97% | 4.42% | 2.46% |
+| 2023 | 246,633 | 0.00% | 97.14% | **0.00%** | 2.86% |
+
+Severity 3 falls from about a third of all records to **none at all** in 2023, and
+severity 1 appears in bulk only in 2020 and 2022. That is a change in reporting
+convention, not a change in how severe accidents became.
+
+Two consequences:
+
+1. **A random split flatters the models.** `Year` is a feature, so a model can score
+   partly by recognising which regime a record was logged under. The table above is
+   therefore the right basis for *comparing* models — all four saw identical rows —
+   but it is not evidence of real-world skill.
+2. **A temporal holdout is far harsher.** Training on 2016–2021 and testing on
+   2022–2023:
+
+   | Model | Macro F1 (random) | Macro F1 (temporal) |
+   | --- | ---: | ---: |
+   | Gradient Boosting | 0.5791 | **0.3976** |
+   | Decision Tree | 0.5076 | **0.3618** |
+
+   Accuracy *rises* to 0.918 on the temporal split while macro F1 halves, because
+   2022–2023 is 91.7% severity 2. That gap is the clearest possible illustration of
+   why accuracy is the wrong headline metric here.
+
+Reproduce the holdout yourself:
+
+```bash
+uv run sta train --temporal --train-years 2016-2021 --test-years 2022-2023
+```
+
+What was investigated, and what it rules out:
+
+- **Threshold calibration is not the cause.** Disabling it changes macro F1 from
+  0.3618 to 0.3571 — within noise.
+- **Dropping `Year` does not help.** It makes matters *worse* (0.3088), so `Year`
+  carries genuine signal rather than being a pure regime shortcut.
+- **The operating point is the lever.** Thresholds fitted with knowledge of the
+  target period reach 0.7235. That is an oracle a deployed model cannot use, but
+  calibrating on the most recent *available* period is legitimate and recovers part
+  of the gap (0.2152 → 0.2608 on a 2016–2019 → 2021–2023 protocol).
+
+The honest summary: these models predict **how severity was recorded in a given
+reporting era**, not how severe a crash physically was. Neither figure should be
+presented as a forecast.
+
 **The three headline metrics disagree about which model is best.** Macro F1 and balanced
 accuracy reward opposite ends of the same precision/recall dial on a target this imbalanced,
 so no model wins on all three. The Model Evaluation page lets you choose which metric selects
@@ -683,10 +740,16 @@ bounded samples. Figures computed on a sample are labelled as such wherever they
 
 **Models are exploratory.** They are trained and evaluated on one historical dataset. They are
 not validated for real-world traffic-safety use, they are not calibrated, and they should not
-inform operational decisions. Notably, this project does **not** perform temporal validation
-(training on one period, testing on a later one), so the reported metrics measure how well the
-models reproduce recorded severity patterns in this data — not how well they would forecast a
-future accident.
+inform operational decisions.
+
+**The reported metrics do not survive a temporal holdout.** Training on 2016-2021 and testing
+on 2022-2023 drops macro F1 from 0.5791 to 0.3976 for the gradient-boosting model. The cause is
+that severity prevalence shifts drastically across the years — severity 3 goes from about a
+third of all records to none at all in 2023 — so a model partly learns the reporting convention
+of a period rather than the severity of an incident. This project now supports the check
+(`uv run sta train --temporal --train-years 2016-2021 --test-years 2022-2023`); the full
+investigation, including what was ruled out, is in
+[These numbers are optimistic](#these-numbers-are-optimistic-and-here-is-why).
 
 **Feature importance is not causation.** A high importance score means the model *used* a
 feature, not that the feature *causes* severity. Correlated features split importance between

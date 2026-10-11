@@ -28,6 +28,7 @@ from smart_traffic.ui import (
     page_header,
     require_dataset,
     section,
+    severity_regime_warning,
     sidebar_header,
 )
 from smart_traffic.visualizations import probability_chart
@@ -44,6 +45,7 @@ page_header(
     "a trained model to a single hypothetical accident.",
     icon="🤖",
 )
+severity_regime_warning()
 
 # ---------------------------------------------------------------------------
 # Scenario and leakage policy
