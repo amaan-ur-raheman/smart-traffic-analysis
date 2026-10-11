@@ -1,0 +1,49 @@
+# ---- Data (never commit; the raw CSV is ~3 GB) ----
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/analytics/*
+!data/analytics/.gitkeep
+data/synthetic/*
+!data/synthetic/.gitkeep
+*.csv
+*.parquet
+*.duckdb
+*.duckdb.wal
+
+# ---- Generated artifacts ----
+models/*
+!models/.gitkeep
+artifacts/*
+!artifacts/.gitkeep
+logs/*
+!logs/.gitkeep
+*.joblib
+*.pkl
+
+# ---- Python / uv ----
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# ---- Streamlit ----
+.streamlit/secrets.toml
+
+# ---- OS / editors ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ---- Env / secrets ----
+.env
+.env.*

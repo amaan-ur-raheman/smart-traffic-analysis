@@ -1,0 +1,92 @@
+[project]
+name = "smart-traffic-analysis"
+version = "1.0.0"
+description = "Interactive analytics and severity prediction for the US Accidents (2016-2023) dataset."
+readme = "README.md"
+authors = [
+    { name = "Amaan Ur Raheman Shaikh", email = "amaanurrahemanshaikh@gmail.com" }
+]
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "duckdb>=1.4.0",
+    "folium>=0.20.0",
+    "joblib>=1.5.0",
+    "numpy>=2.2.0",
+    "pandas>=2.3.0",
+    "plotly>=6.0.0",
+    "pyarrow>=20.0.0",
+    "scikit-learn>=1.6.0",
+    "scipy>=1.15.0",
+    "streamlit>=1.40.0",
+    "streamlit-folium>=0.24.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "ruff>=0.9.0",
+]
+
+[project.scripts]
+sta = "smart_traffic.cli:main"
+
+[tool.uv.build-backend]
+module-name = "smart_traffic"
+module-root = "src"
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "RET",  # flake8-return
+    "PTH",  # flake8-use-pathlib
+    "N",    # pep8-naming
+    "ANN",  # flake8-annotations
+    "D",    # pydocstyle
+]
+ignore = [
+    "D203",  # incompatible with D211
+    "D213",  # incompatible with D212
+    "ANN401",# allow typing.Any in signatures where genuinely dynamic
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The experiment harness is a throwaway measurement script: fully typed
+# signatures would obscure what it measures, and it is never imported by the app.
+"scripts/*" = ["ANN001", "ANN201", "ANN202", "D103"]
+# Test names are the documentation. A docstring on each of the 200+ test
+# methods would restate the name without adding information, so D100/D102/D103
+# are waived for tests only.
+"tests/*" = ["D100", "D102", "D103", "ANN001", "ANN201"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+known-first-party = ["smart_traffic"]

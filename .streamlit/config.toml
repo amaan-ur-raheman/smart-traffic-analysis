@@ -1,0 +1,25 @@
+[server]
+# Bind to localhost only. This application reads a local dataset and trains
+# local models; it has no reason to accept connections from the network.
+address = "127.0.0.1"
+headless = true
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#2c7bb6"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f6f8fa"
+textColor = "#1f2933"
+font = "sans serif"
+
+[runner]
+# Ingestion and model training are long operations; a generous timeout avoids
+# spurious failures while still bounding a runaway task.
+fastReruns = true
+
+[client]
+showErrorDetails = false
+toolbarMode = "minimal"
