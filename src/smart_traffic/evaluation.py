@@ -11,6 +11,7 @@ and balanced accuracy (mean recall across categories).
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -165,6 +166,11 @@ def evaluate_model(
     report = pd.DataFrame(rows)
 
     matrix = confusion_matrix(y_test, predictions, labels=list(labels))
+    if matrix.shape != (len(labels), len(labels)):
+        raise ValueError(
+            f"Confusion matrix is {matrix.shape}, expected "
+            f"({len(labels)}, {len(labels)}) for labels {list(labels)}."
+        )
     confusion = pd.DataFrame(
         matrix,
         index=[f"Actual {label}" for label in labels],
@@ -204,6 +210,16 @@ def _scalar_metrics(y_true: pd.Series, y_pred: np.ndarray) -> dict[str, float]:
     precision, recall, f1, _support = precision_recall_fscore_support(
         y_true, y_pred, average="macro", zero_division=0
     )
+    # balanced_accuracy_score builds a confusion matrix internally over the
+    # observed labels only, so sklearn warns "A single label was found" whenever
+    # every prediction shares one category. That is exactly the degenerate case
+    # evaluate_model is asked to handle, and the warning says nothing we have
+    # not already established. Scoped to this one call and this exact message.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", message="A single label was found", category=UserWarning
+        )
+        balanced = float(balanced_accuracy_score(y_true, y_pred))
     weighted_f1 = float(
         precision_recall_fscore_support(
             y_true, y_pred, average="weighted", zero_division=0
@@ -211,7 +227,7 @@ def _scalar_metrics(y_true: pd.Series, y_pred: np.ndarray) -> dict[str, float]:
     )
     return {
         "Accuracy": round(float(accuracy_score(y_true, y_pred)), 4),
-        "Balanced_Accuracy": round(float(balanced_accuracy_score(y_true, y_pred)), 4),
+        "Balanced_Accuracy": round(balanced, 4),
         "Macro_Precision": round(float(precision), 4),
         "Macro_Recall": round(float(recall), 4),
         "Macro_F1": round(float(f1), 4),

@@ -179,18 +179,31 @@ def load_model_summary(models_dir: Path | None = None) -> dict[str, Any]:
             the configured models directory.
 
     Returns:
-        The decoded summary, or ``{}`` when the file is missing or unreadable.
+        The decoded summary, or ``{}`` when the file is absent.
+
+    A file that exists but cannot be read is a different situation from one that
+    was never written, and the two are reported differently. Returning ``{}`` for
+    both made a corrupt summary indistinguishable from "no models trained", which
+    is the same class of defect as the session-state bug this function replaced.
     """
     import json
 
     from smart_traffic.config import PATHS
+    from smart_traffic.logging_config import get_logger
 
+    logger = get_logger(__name__)
     path = Path(models_dir or PATHS.models) / "training_summary.json"
     if not path.exists():
         return {}
     try:
         return json.loads(path.read_text())
-    except (OSError, ValueError):
+    except (OSError, ValueError) as exc:
+        # Surface it rather than masquerading as an absent model set.
+        logger.error(
+            "Model summary at %s could not be read (%s). Retrain with "
+            "'uv run sta train' to regenerate it.",
+            path, exc,
+        )
         return {}
 
 

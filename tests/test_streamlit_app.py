@@ -167,3 +167,80 @@ class TestTrainingDefaultsAgree:
             m for m in re.findall(r"\b\d{5,}\b", args) if m != "1000000"
         ]
         assert not literals, f"hardcoded sample size(s) reintroduced: {literals}"
+
+
+def _page(name: str) -> str:
+    """Resolve a page file by name; PAGES is a list of paths, not a directory."""
+    return str(PROJECT_ROOT / "pages" / name)
+
+
+class TestInteractivePaths:
+    """Clicking each button must not raise.
+
+    Two of the defects this project found (the undeclared `tabulate`, and figures
+    depending on page visit order) lived behind a button, so a suite that only
+    *renders* pages could not see either. These tests click the controls that do
+    not require a full model fit; training and permutation importance are
+    covered separately because they are minutes-long operations.
+
+    Runs against the small synthetic fixture, so every one of these is fast.
+    """
+
+    def test_pca_button(self, processed_table) -> None:
+        test = AppTest.from_file(str(_page("9_PCA_and_Clustering.py")), default_timeout=180).run()
+        _assert_no_exception(test, "9_PCA_and_Clustering.py")
+        clicked = False
+        for button in list(test.button):
+            if button.label == "Run PCA":
+                test = button.click().run()
+                clicked = True
+                break
+        assert clicked, "Run PCA button not found"
+        _assert_no_exception(test, "9_PCA_and_Clustering.py after Run PCA")
+
+    def test_kmeans_button(self, processed_table) -> None:
+        test = AppTest.from_file(str(_page("9_PCA_and_Clustering.py")), default_timeout=180).run()
+        for button in list(test.button):
+            if button.label == "Run K-Means":
+                test = button.click().run()
+                break
+        _assert_no_exception(test, "9_PCA_and_Clustering.py after Run K-Means")
+
+    def test_hierarchical_button(self, processed_table) -> None:
+        test = AppTest.from_file(str(_page("9_PCA_and_Clustering.py")), default_timeout=180).run()
+        for button in list(test.button):
+            if button.label == "Run hierarchical clustering":
+                test = button.click().run()
+                break
+        _assert_no_exception(test, "9_PCA_and_Clustering.py after hierarchical")
+
+    def test_markdown_report_button(self, processed_table) -> None:
+        """The export that silently failed for want of an undeclared dependency."""
+        test = AppTest.from_file(str(_page("13_Key_Findings.py")), default_timeout=180).run()
+        clicked = False
+        for button in list(test.button):
+            if "Markdown" in button.label:
+                test = button.click().run()
+                clicked = True
+                break
+        assert clicked, "Markdown report button not found"
+        _assert_no_exception(test, "13_Key_Findings.py after report generation")
+
+    def test_export_bundle_button(self, processed_table) -> None:
+        test = AppTest.from_file(str(_page("13_Key_Findings.py")), default_timeout=180).run()
+        for button in list(test.button):
+            if "export bundle" in button.label:
+                test = button.click().run()
+                break
+        _assert_no_exception(test, "13_Key_Findings.py after export bundle")
+
+    def test_key_findings_shows_models_without_visit_order(self, processed_table) -> None:
+        """Opening Key Findings first must not claim the models are absent.
+
+        The bug: `model_summary` came from session state that only Model
+        Evaluation writes, so the report said "No models have been trained".
+        """
+        test = AppTest.from_file(str(_page("13_Key_Findings.py")), default_timeout=180).run()
+        _assert_no_exception(test, "13_Key_Findings.py opened directly")
+        # The report must never claim absence while a summary is on disk.
+        assert "No models have been trained" not in test.markdown
