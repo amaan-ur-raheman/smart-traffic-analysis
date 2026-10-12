@@ -475,7 +475,7 @@ the terminal.
 ## 11. Running tests and lint checks
 
 ```bash
-uv run pytest            # 352 tests
+uv run pytest            # 372 tests
 uv run pytest -v         # verbose
 uv run pytest tests/test_modeling.py -k leakage
 uv run ruff check .
@@ -494,6 +494,11 @@ uv run ruff check . --fix
 | `test_evaluation.py` | Metric correctness, permutation importance, prediction validation, exports |
 | `test_tuning.py` | Threshold calibration: never degrades validation score, valid estimator |
 | `test_streamlit_app.py` | Every page renders, with and without a dataset |
+
+Coverage added after the independent audit, as regression tests for the defects it found:
+corrupt-Parquet handling, the PCA variance-threshold claim, prediction-confidence
+attribution, Arrow-serialisable report frames, calendar-year holdout splitting, and
+findings-report construction. See `AUDIT_REPORT.md` for the full defect list.
 
 Tests run against small synthetic fixtures in a temporary directory. **The 3 GB CSV is never
 required and never downloaded.** Every test is independent of the others and of the real
@@ -594,7 +599,7 @@ smart-traffic-analysis/
 │
 ├── scripts/
 │   └── experiment.py          Measured model-improvement harness
-├── tests/                     338 tests
+├── tests/                     372 tests
 ├── data/
 │   ├── raw/                   ← place US_Accidents_March23.csv here
 │   ├── processed/             Generated Parquet + DuckDB catalogue

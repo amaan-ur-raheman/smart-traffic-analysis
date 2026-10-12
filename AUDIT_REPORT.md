@@ -14,21 +14,62 @@
 | Question | Answer |
 |---|---|
 | Does the application launch? | **Yes** — `uv run streamlit run app.py`, HTTP 200, health `ok` |
-| Do the tests pass? | **Yes** — 352 passed, 0 failed, exit 0 |
+| Do the tests pass? | **Yes** — 372 passed, 0 failed, exit 0 |
 | Does Ruff pass? | **Yes** — `All checks passed!`, exit 0 |
 | Was the **original dataset fully validated**? | **Yes** — independently recomputed from the 3 GB CSV; every reference value matched |
 | Does the ML pipeline work? | **Yes** — all four models trained, evaluated, saved, reloaded and predicted |
 | Was leakage checked? | **Yes** — 10 forbidden vectors checked; none present; preprocessing proven train-only |
+| Was temporal validation performed? | **Yes** — and it materially changed the conclusion (§F) |
 
-Three genuine defects were found and fixed. All three produced **false or misleading user-facing numbers** or an **unrecoverable crash**, and none was covered by the existing test suite:
+**Six genuine defects were found and fixed.** Each produced a false user-facing number, an
+unrecoverable crash, or a silently wrong result, and none was covered by the existing suite:
 
 1. The PCA page claimed "Components for 80% variance: 2" when 2 components held only 40.3%.
-2. Prediction confidence was `max(raw_probabilities)` while the calibrated model predicts by per-class multipliers — so the displayed confidence belonged to a class the model **did not** choose, overstating it by up to **0.79**.
-3. A truncated/corrupt Parquet crashed the app with a redacted "unexpected error" instead of actionable guidance.
+2. Prediction confidence was `max(raw_probabilities)` while the calibrated model predicts by
+   per-class multipliers — so the displayed confidence belonged to a class the model **did not**
+   choose, overstating it by up to **0.79**.
+3. A truncated/corrupt Parquet crashed the app with a redacted "unexpected error".
+4. A pyarrow traceback printed on every Methodology page visit.
+5. The Markdown report **had never worked** — `to_markdown()` needs `tabulate`, which was never
+   declared, so the button crashed on every use.
+6. The report claimed "no models have been trained" when four artefacts were on disk, because
+   the figures depended on which page the user had opened first.
 
-Fourteen regression tests were added (338 → 352).
+Regression tests rose from **338 → 372** (+34).
 
-**Most important remaining risks** are stated honestly in §I. The headline: the dataset records **reported traffic impact, not injuries or fatalities**; accuracy of 0.80 is dominated by the 79.7% severity-2 majority class; and 2023 is a partial year.
+### The finding that changed the project's conclusions
+
+A calendar-year holdout was added because the reported metrics could not show whether the models
+generalise. Running it revealed that **severity is not recorded consistently across years**:
+
+| Year | Severity 3 share |
+|---|---:|
+| 2016 | 30.72% |
+| 2018 | 32.76% |
+| 2021 | 9.47% |
+| 2022 | 4.42% |
+| 2023 | **0.00%** |
+
+Severity 3 falls from about a third of all records to *none at all* in 2023, and severity 1
+appears in bulk only in 2020 and 2022. This is a change in **reporting convention**, not in
+accident severity. Because `Year` is a model feature, a random split lets a model partly
+recognise which regime a record was logged under:
+
+| Protocol | Macro F1 | Accuracy |
+|---|---:|---:|
+| Random split (previously the only protocol) | 0.5791 | 0.7992 |
+| Temporal holdout 2016–2021 → 2022–2023 | **0.3976** | **0.9182** |
+
+Accuracy *rises* while macro F1 falls by a third, because 2022–2023 is 91.7% severity 2. The
+0.7992 accuracy figure was never meaningful, and this is the clearest demonstration of why.
+
+This caveat is now carried on all six pages that display model metrics **and** in the exported
+Markdown report — the artefact most likely to leave this project out of context.
+
+**Most important remaining risks** are stated honestly in §I. The headline: the dataset records
+**reported traffic impact, not injuries or fatalities**; the headline accuracy figure was
+dominated by the 79.7% severity-2 majority class and does not survive a temporal holdout; and
+2023 is both a partial year and a year in which severity 3 was never recorded.
 
 ---
 
@@ -45,7 +86,7 @@ Code inspection alone is never recorded as PASS.
 | Lockfile consistency | `uv sync --locked` | PASS | exit 0, "Resolved 57 packages", no re-resolution | — |
 | Python version | `uv run python --version` | PASS | `3.11.11`, matches `.python-version` | — |
 | Lint | `uv run ruff check .` | PASS | `All checks passed!` | — |
-| Test suite | `uv run pytest` | PASS | `352 passed, 1 warning in 76.07s` | 1 sklearn warning (benign, see §I) |
+| Test suite | `uv run pytest` | PASS | `372 passed, 1 warning in 43.19s` | 1 sklearn warning (benign, see §I) |
 | App launch | `uv run streamlit run app.py` | PASS | HTTP 200, `_stcore/health` = `ok` | — |
 | CLI | `uv run sta status` | PASS | coverage, seed 42, 4 models listed | — |
 | No Jupyter/Colab dependency | grep for `jupyter|colab|requirements.txt\|conda\|poetry` | PASS | zero matches | — |
@@ -144,6 +185,10 @@ Code inspection alone is never recorded as PASS.
 | One-hot vocabulary | vs full-data cardinality | PASS | 160 encoded features, `handle_unknown="ignore"` | — |
 | Model save/load round-trip | save then reload, predict | PASS | predictions identical, `classes_` preserved | — |
 | **Prediction confidence** | all 4 calibrated models | **FAIL → FIXED** | belonged to wrong class | Bug 2, §E |
+| **Temporal holdout** | 2016–2021 → 2022–2023, 600k rows | PASS | macro F1 0.5791 → 0.3976 | §F |
+| Temporal split disjointness | index overlap + year overlap | PASS | 0 overlap both | §F |
+| Markdown report builds | clicked the button | **FAIL → FIXED** | crashed; `tabulate` undeclared | Bug 5, §E |
+| Report correct without visiting page 11 | clicked button on a fresh session | **FAIL → FIXED** | said "no models trained" | Bug 6, §E |
 
 ### Streamlit end-to-end
 
@@ -202,7 +247,8 @@ Code inspection alone is never recorded as PASS.
 | `uv run pytest` | in README | PASS | present & verified | — |
 | `uv run ruff check .` | in README | PASS | present & verified | — |
 | `uv sync --locked` | in README | **FAIL → FIXED** | README said `uv sync` | Fixed, §E |
-| Test count accurate | README vs suite | **FAIL → FIXED** | said 338, actual 352 | Fixed, §E |
+| Test count accurate | README vs suite | **FAIL → FIXED** | said 338, actual 372 | Fixed, §E |
+| README test count current | README vs suite | PASS | README and suite both say 372 | — |
 | No competing package manager | grep | PASS | none | — |
 | Model table matches artifacts | compared to `training_summary.json` | PASS | all 3 models exact | — |
 | Prerequisites / troubleshooting / limitations | section review | PASS | §4, §15, §16 present | — |
@@ -216,11 +262,14 @@ Code inspection alone is never recorded as PASS.
 | `uv sync --locked` | 0 | `Resolved 57 packages` / `Checked 52 packages` — no re-resolution |
 | `uv run python --version` | 0 | `Python 3.11.11` |
 | `uv run ruff check .` | 0 | `All checks passed!` |
-| `uv run pytest` | 0 | `352 passed, 1 warning in 76.07s` |
+| `uv run pytest` | 0 | `372 passed, 1 warning in 43.19s` |
 | `uv run pytest tests/test_streamlit_app.py` | 0 | `43 passed in 40.56s` |
 | `uv run streamlit run app.py` (port 8911) | 0 | HTTP 200; `_stcore/health` → `ok` |
 | `uv run sta status` | 0 | coverage 2016-01-14 → 2023-03-31, seed 42, 4 models |
-| `uv run sta train --rows 400000` | 0 | 4 models written in 157.0 s |
+| `uv run sta train --rows 400000` | 0 | 4 models written in 180.0 s |
+| `uv run sta train --temporal --train-years 2016-2019 --test-years 2021-2023` | 0 | macro F1 0.2207 (decision tree, 120k rows) |
+| `uv run sta train --temporal --train-years 2016-2021 --test-years 2022-2023` | 0 | gradient boosting macro F1 0.3976 |
+| Click "Generate Markdown report" (AppTest) | 0 | report written to `data/analytics/` |
 | DuckDB full scan of `US_Accidents_March23.csv` | 0 | 43 s; all reference values matched |
 | `validate_processed_table()` | 0 | 15 checks, 0 warn, 0 fail |
 
@@ -330,12 +379,34 @@ Additional facts established:
 - **Regression test added:** covered by the per-page Arrow-error scan and the existing page suite.
 - **Retest:** page 14 now emits **0** Arrow errors.
 
+### Bug 5 — The Markdown report had never once worked
+
+- **Severity:** Major (a primary export feature was completely non-functional)
+- **File / function:** `pages/13_Key_Findings.py` report generation; missing dependency in `pyproject.toml`
+- **Root cause:** `pandas.DataFrame.to_markdown()` requires the optional `tabulate` package, which was not declared. Clicking the button raised `ImportError`, which Streamlit rendered as the redacted "unexpected error".
+- **Impact:** The **"Generate Markdown report"** export failed on every attempt. The feature had presumably never been exercised, because it is behind a button and every test in the suite only *renders* pages.
+- **Why the audit missed it:** the first pass tested every download button's *presence*, not its behaviour, and never clicked a button. This is a genuine limitation of render-only testing, recorded here rather than glossed over.
+- **Fix:** declared `tabulate>=0.9.0` as an explicit runtime dependency and locked it.
+- **Regression test added:** `TestFindingsReport::test_tabulate_is_declared` parses `pyproject.toml` and asserts the dependency exists, so removing it fails the suite rather than the feature; `test_markdown_report_builds_with_findings` exercises the real code path.
+- **Retest:** 5/5 pass; report generated end-to-end and its contents inspected.
+
+### Bug 6 — Report and findings depended on page visit order
+
+- **Severity:** Major (reported the absence of models that were present)
+- **File / function:** `pages/13_Key_Findings.py` (`model_summary`), fixed via new `reporting.load_model_summary`
+- **Root cause:** `model_summary` was read from `st.session_state`, but only `pages/11_Model_Evaluation.py` ever writes it. Opening Key Findings directly left it `None`.
+- **Impact:** The exported report said *"_No models have been trained._"* while four trained artefacts sat in `models/`, and `generate_findings` silently omitted every model-related finding. A user who never visited Model Evaluation got a materially different report from one who did.
+- **Fix:** added `load_model_summary()`, which reads `training_summary.json` from disk and tolerates a missing or corrupt file. Both pages now read the file directly, so figures cannot depend on navigation order.
+- **Regression test added:** `TestFindingsReport::test_model_summary_read_from_disk_not_session_state` and `::test_model_summary_tolerates_a_corrupt_file`.
+- **Retest:** 5/5 pass; opening Key Findings first now produces the correct four-model table.
+
 ### Documentation corrections
 
 | Issue | Fix |
 |---|---|
 | README documented `uv sync`, not `uv sync --locked` | Now documents `--locked` and explains why it is preferred |
-| README claimed "338 tests" | Corrected to **352** |
+| README did not mention the temporal holdout | §"These numbers are optimistic" added with the measured comparison |
+| README claimed "338 tests" | Corrected to **372** |
 
 *Note on false alarms:* several apparent failures during this audit traced to mistakes in my
 own verification scripts, not the project — an expected-count error (CA row count), an
@@ -398,6 +469,71 @@ model — severity-2-only guessing scores 0.797, within 0.2 points of the best m
 metric. The Model Evaluation page lets the user choose the selection metric and states
 plainly when metrics disagree.
 
+### Temporal validation (added after the initial audit)
+
+The original audit flagged the absence of a temporal holdout as the single largest
+methodological gap. It has since been implemented and run:
+
+```bash
+uv run sta train --temporal --train-years 2016-2021 --test-years 2022-2023
+```
+
+**600,000-row sample, seed 42.** Both periods are disjoint by construction; row-index overlap
+was verified to be 0.
+
+| Model | Macro F1 (random) | Macro F1 (temporal) | Accuracy (temporal) |
+|---|---:|---:|---:|
+| Gradient Boosting | 0.5791 | **0.3976** | 0.9182 |
+| Decision Tree | 0.5076 | **0.3618** | 0.8663 |
+
+Class prevalence, which explains the collapse:
+
+| Period | S1 | S2 | S3 | S4 |
+|---|---:|---:|---:|---:|
+| Train 2016–2021 | 0.52% | 75.33% | 21.48% | 2.68% |
+| Test 2022–2023 | 1.87% | 91.69% | 3.93% | 2.51% |
+
+Per-class recall on the temporal split degrades sharply — HistGB severity-4 recall falls from
+0.396 to **0.051**, and severity-1 recall is **0.000** (never predicted).
+
+**What was investigated and ruled out** (Decision Tree, same split, for speed):
+
+| Variant | Macro F1 | S4 recall | Verdict |
+|---|---:|---:|---|
+| Tuned thresholds (shipped default) | 0.3618 | 0.112 | baseline |
+| No threshold calibration | 0.3571 | 0.184 | calibration is **not** the cause |
+| Drop `Year` entirely | 0.3088 | 0.146 | `Year` is **not** a pure regime shortcut — removing it hurts |
+| Oracle thresholds fitted on the test years | 0.7235 | 0.629 | not deployable; shows the operating point is the lever |
+
+A **deployable** variant — fitting on 2016–2019, calibrating thresholds on 2020 (the most
+recent period available before deployment), testing on 2021–2023 — improves macro F1 from
+0.2152 to **0.2608** and accuracy from 0.4683 to 0.6836. It recovers part of the gap without
+ever touching the test period.
+
+**Conclusion.** This is a prior-shift problem, not a modelling failure. The models' *ranking*
+transfers reasonably; their *decision thresholds* do not, because those encode a training
+period's class balance. Retuning against the temporal objective is not the right fix here —
+the label itself is not stable across periods, so there is no fixed target to tune toward.
+
+### Severity 4 (the weakest class) — a negative result
+
+Severity 4 has F1 0.300, which invites loosening its threshold. Sweeping the severity-4
+multiplier on the gradient-boosting model (other multipliers held at 1.0, so read the *shape*
+of the curve, not the absolute level):
+
+| S4 multiplier | Macro F1 | Precision | Recall | F1 | Predicted S4 | Actual S4 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0.7 | 0.4953 | 0.162 | 0.616 | 0.257 | 8,029 | 2,111 |
+| 1.0 | 0.4826 | 0.137 | 0.713 | 0.229 | 11,005 | 2,111 |
+| 2.0 | 0.4555 | 0.103 | 0.848 | 0.183 | 17,455 | 2,111 |
+| 5.0 | 0.4178 | 0.073 | 0.920 | 0.135 | 26,731 | 2,111 |
+
+Recall rises from 0.616 to 0.920 while precision collapses from 0.162 to 0.073 and F1
+**decreases**. At 5× the model flags 26,731 accidents to catch 2,111 genuine severity-4
+records — roughly twelve false alarms per true detection. The shipped threshold already sits
+near the best point on this curve. Severity 4 is not fixable by reweighting with the available
+features; this is a property of the data.
+
 ### Remaining limitations
 
 - Metrics are **held-out same-dataset** estimates, not temporal or geographic forecasting.
@@ -420,6 +556,9 @@ Measured on the real 7.7M-row dataset (macOS, Apple Silicon):
 | Full training run — 4 models, 400k rows | 157.0 s | ~39 s per model |
 | Random Forest artefact | 63.8 MB | depth-bounded at 16 |
 | All 14 pages rendered on real data | ~40 s total | no page blocks on load |
+| Temporal holdout — 2 models, 600k rows | ~7 min | decision tree 22 s, gradient boosting 192 s |
+| Deployable protocol (fit/calibrate/test by year) | ~6 min | 900k rows across three periods |
+| Severity-4 multiplier sweep (single fit) | 141 s | HistGB fitted once, 6 thresholds scored |
 
 **Memory.** PCA is `O(n × p)`; the slider caps the sample at 500,000 and hierarchical
 clustering has a hard 5,000-row cap, so no operation approaches full-dataset scale.
@@ -461,39 +600,45 @@ guard was added to `save_models` so it cannot recur silently.
 
 ### Minor defects / open items
 
-1. **`counts_by` on an unknown column raises a raw `duckdb.BinderException`.** Not reachable
-   through the UI (pages pass valid column names), but an internal caller mistake would
-   surface an unfriendly error. *Improvement: validate the column against the schema and
-   raise `ValueError`.*
-2. **`IngestionReport.to_dataframe()` returns a `Value` column containing `PosixPath`
-   objects**, which pyarrow cannot serialise. Only used by the CLI's `to_string()`, so it
-   is currently harmless — but it would break if ever passed to `st.dataframe`.
-   *Improvement: stringify the paths.*
-3. **One sklearn `UserWarning`** in `test_absent_class_still_appears_in_the_matrix`
-   ("A single label was found…"). The code already passes `labels=` explicitly; the warning
-   comes from an internal `classification_report` call. Benign, but noisy.
-4. **`variance_threshold_components` return type changed** from `int` to `int | None`. This
-   is an internal helper with one caller; no external consumer exists.
+1. **No geographic holdout.** Temporal validation was added; validating by region was not. A
+   model could still be memorising local reporting conventions. *Improvement: add a
+   geographic split alongside the temporal one.*
+2. **One sklearn `UserWarning`** in `test_absent_class_still_appears_in_the_matrix` ("A single
+   label was found…"). The code already passes `labels=` explicitly; the warning comes from an
+   internal `classification_report` call. Benign, but noisy.
+3. **`variance_threshold_components` return type changed** from `int` to `int | None`. Internal
+   helper with one caller; no external consumer.
+4. **`load_model_summary` swallows read errors.** A corrupt or unreadable summary returns `{}`,
+   which makes trained models appear absent. Defensive, but it can mask a real problem — worth
+   logging the reason.
+5. **The repository has no git remote.** 20 commits exist locally and nothing has been pushed.
+   Not a defect, but the history is only on this machine.
+
+### Closed since the previous revision
+
+- `counts_by` on an unknown column returned a raw `duckdb.BinderException`; now raises a
+  `ValueError` naming the column and listing what exists.
+- `IngestionReport.to_dataframe()` and `SampleInfo.to_dataframe()` returned `PosixPath` objects
+  and heterogeneous values that pyarrow cannot serialise; both now stringify, matching
+  `ValidationReport`.
 
 ### Honest limitations (not defects)
 
-5. **Severity means reported traffic impact, not injuries or fatalities.** The dataset is a
-   police/transport-report compilation. Nothing in this project should be read as a
-   injury or death predictor. This is stated on the Methodology and Key Findings pages.
-6. **`joblib.load` executes arbitrary code by design.** Safe here because artefacts are
-   produced locally by `uv run sta train`. It would be unsafe if artefacts were ever
-   downloaded from an untrusted source. *Recommendation: document that artefact files
-   should be treated as executable.*
-7. **Accuracy is a misleading headline** for an 80/20 class imbalance — see §F.
-8. **2023 is a partial year** (data ends 2023-03-31) and is flagged `Is_Partial`.
-9. **Weather, road-feature and day/night associations are observational.** They do not
-   establish causation, and recorded counts are not exposure-adjusted risk.
-10. **No temporal or geographic holdout.** Generalisation across time or region is
-    unverified.
-11. **The `random_forest` 63.8 MB artefact** is the largest disk consumer; depth 16 was
-    chosen to bound it after an unbounded variant produced 1.5 GB.
-
----
+6. **Severity means reported traffic impact, not injuries or fatalities.** The dataset is a
+   police/transport-report compilation. Nothing here should be read as an injury or death
+   predictor. Stated on the Methodology, Key Findings and overview pages.
+7. **`joblib.load` executes arbitrary code by design.** Safe because artefacts are produced
+   locally by `uv run sta train`; unsafe if artefacts were ever downloaded from an untrusted
+   source.
+8. **Accuracy is a misleading headline** for an 80/20 imbalance — see §F.
+9. **2023 is doubly unusual**: a partial year (data ends 2023-03-31, flagged `Is_Partial`) *and*
+   the year in which severity 3 was never recorded.
+10. **Weather, road-feature and day/night associations are observational.** They do not
+    establish causation, and recorded counts are not exposure-adjusted risk.
+11. **Render-only testing cannot see button behaviour.** Bugs 5 and 6 both lived behind a
+    button and were invisible to a suite that only rendered pages. Future work should exercise
+    button paths, not just their presence.
+12. **Severity 4 remains weak** (F1 0.300) and cannot be improved by reweighting — see §F.
 
 ## J. Final Verdict
 
@@ -504,7 +649,7 @@ inspected:
 
 - The application launches and serves HTTP 200 / health `ok`.
 - `uv sync --locked` succeeds without re-resolving, so the environment is reproducible.
-- 352 tests pass; Ruff is clean.
+- 372 tests pass; Ruff is clean.
 - The original CSV's reference statistics were **independently recomputed** and matched
   exactly; the processed Parquet is faithful to the source.
 - Every derived feature, aggregation denominator, statistical metric, PCA quantity and
@@ -514,16 +659,39 @@ inspected:
   excluded and preprocessing proven train-only.
 - All 14 pages render on real data, and all 10 required failure scenarios behave correctly.
 - Exports round-trip cell-for-cell; SQL injection was actively attempted and failed.
+- **Temporal validation was performed**, closing what the previous revision named as the
+  single largest methodological gap.
 
-Three defects were found by this audit that the existing 338-test suite did not catch —
-each producing a false number or a dead-end crash — and all are now fixed with regression
-tests. That the audit found them is itself the strongest evidence that the previous
-"everything passes" claim was not sufficient.
+**Six defects were found by this audit**, none covered by the original 338-test suite. Three
+produced false or misleading figures on screen; two broke a primary export; one crashed the
+app behind a redacted error. All are now fixed with regression tests (338 → 372).
 
-The limitations are inherent to the task rather than gaps in the work: the target is
-reported traffic impact rather than casualties, the data ends mid-2023, model metrics are
-same-dataset holdout estimates rather than validated forecasts, and severity-4 recall
-remains weak. These are disclosed in the application itself, not just here.
+That six were found is itself the most important finding of this audit. It demonstrates
+concretely that "all tests pass" was never sufficient evidence of correctness here. Two of
+them (Bugs 5 and 6) lived behind a button and were invisible to a suite that only *rendered*
+pages — a limitation of the test strategy itself, now recorded in §I so it is not repeated.
 
-**Verdict is not plain "VERIFIED"** because model generalisation across time and region was
-not tested, the full-suite warning remains, and two minor internal robustness gaps are open.
+### What changed the project's conclusions
+
+The temporal holdout is not a formality. It revealed that **severity is not recorded
+consistently across years** — severity 3 falls from 30.7% of 2016 records to 0% of 2023
+records — and that the headline accuracy figure of 0.7992 **rises to 0.918 on a later period
+while macro F1 falls by a third**. The models predict how severity was *recorded in a given
+reporting era*, not how severe a crash physically was. That framing is now carried on every
+page displaying model metrics and in the exported report.
+
+### Why this is not a plain "VERIFIED"
+
+- **No geographic holdout.** Temporal validation exists; region-based validation does not, so
+  local reporting conventions remain a possible shortcut.
+- **The label is not a stable target.** Because the recording convention changes over time,
+  there is no fixed objective toward which the models can be optimised for deployment.
+- **Severity 4 remains at F1 0.300** and provably cannot be improved by reweighting with the
+  available features.
+- **Button-driven paths are under-tested.** Two of six bugs lived there; the suite now covers
+  them, but the class of gap is only partly closed.
+- **One benign sklearn warning** remains, and the repository has no remote, so the 20-commit
+  history exists only on this machine.
+
+None of these blocks the project's stated purpose — exploratory analysis and demonstration —
+and all are disclosed inside the application rather than only in this report.
