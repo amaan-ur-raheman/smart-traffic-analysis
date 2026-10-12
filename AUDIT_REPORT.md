@@ -14,7 +14,7 @@
 | Question | Answer |
 |---|---|
 | Does the application launch? | **Yes** — `uv run streamlit run app.py`, HTTP 200, health `ok` |
-| Do the tests pass? | **Yes** — 372 passed, 0 failed, exit 0 |
+| Do the tests pass? | **Yes** — 379 passed, 0 failed, exit 0 |
 | Does Ruff pass? | **Yes** — `All checks passed!`, exit 0 |
 | Was the **original dataset fully validated**? | **Yes** — independently recomputed from the 3 GB CSV; every reference value matched |
 | Does the ML pipeline work? | **Yes** — all four models trained, evaluated, saved, reloaded and predicted |
@@ -726,7 +726,7 @@ inspected:
 **Seven defects were found by this audit**, none covered by the original 338-test suite. Three
 produced false or misleading figures on screen; two broke a primary export; one crashed the
 app behind a redacted error; and one was a reproducibility defect in this audit's own new
-code, caught before its result was published. All are now fixed with regression tests (338 → 372).
+code, caught before its result was published. All are now fixed with regression tests (338 → 379).
 
 That six were found is itself the most important finding of this audit. It demonstrates
 concretely that "all tests pass" was never sufficient evidence of correctness here. Two of
