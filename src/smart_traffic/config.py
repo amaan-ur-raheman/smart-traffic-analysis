@@ -192,6 +192,32 @@ SEVERITY_MEANING = (
     "1-4 scale. It is not a measurement of injuries, fatalities, or human harm."
 )
 
+#: The severity mix shifts far more between years than any weather or road
+#: factor does, so a model carrying ``Year`` can score well by recognising the
+#: reporting convention rather than the incident. Stated wherever model metrics
+#: appear, including in the exported report, because a figure that travels out
+#: of this application loses every caveat the UI shows next to it.
+SEVERITY_REGIME_CAVEAT = (
+    "Severity is not recorded consistently across years. Severity 3 falls from "
+    "about 33% of 2016 records to 0% of 2023 records, and severity 1 appears in "
+    "bulk only in 2020 and 2022. That is a change in reporting convention, not "
+    "in accident severity."
+)
+
+#: The practical consequence of the shift above, with the measured figures.
+SEVERITY_REGIME_CONSEQUENCE = (
+    "A random split mixes reporting regimes and therefore flatters the models: "
+    "with `Year` among the features, a model can partly recognise which "
+    "convention a record was logged under. A temporal holdout is harsher -- "
+    "training on 2016-2021 and testing on 2022-2023 drops gradient-boosting "
+    "macro F1 from 0.5791 to 0.3976 while accuracy *rises* to 0.918, because "
+    "that period is 91.7% severity 2. Reproduce with:\n\n"
+    "```bash\nuv run sta train --temporal --train-years 2016-2021 "
+    "--test-years 2022-2023\n```\n\n"
+    "Neither figure forecasts a future accident. Both describe how severity was "
+    "recorded, which is a property of the data rather than of the crash."
+)
+
 #: Shown wherever a rate or count could be misread as per-driver risk.
 EXPOSURE_DISCLAIMER = (
     "These are counts of *recorded accidents*, not per-driver risk. The dataset "

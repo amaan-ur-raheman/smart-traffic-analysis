@@ -28,6 +28,8 @@ from smart_traffic.config import (
     PATHS,
     SETTINGS,
     SEVERITY_MEANING,
+    SEVERITY_REGIME_CAVEAT,
+    SEVERITY_REGIME_CONSEQUENCE,
 )
 from smart_traffic.db import DB, DatasetNotAvailableError
 from smart_traffic.feature_engineering import rush_hour_definition_text
@@ -501,32 +503,13 @@ def severity_regime_warning() -> None:
         "Severity is not recorded consistently across years — this limits the models",
         expanded=False,
     ):
-        st.warning(
-            "The severity field reflects a reporting convention that changed over "
-            "time, not a stable physical property of the accidents. Severity 3 "
-            f"falls from {early:.1f}% of records in {int(frame['Year'].iloc[0])} to "
-            f"{late:.1f}% in {int(frame['Year'].iloc[-1])}"
-            + (
-                " — it does not appear at all in the final year."
-                if vanished
-                else "."
-            ),
-            icon="⚠️",
+        measured = (
+            f"Severity 3 is {early:.1f}% of {int(frame['Year'].iloc[0])} records and "
+            f"{late:.1f}% of {int(frame['Year'].iloc[-1])}"
+            + (" — it does not appear at all in the final year." if vanished else ".")
         )
-        st.markdown(
-            "Two consequences worth stating plainly:\n\n"
-            "- **A random split flatters the models.** Because it mixes reporting "
-            "regimes, a model carrying `Year` can partly recognise which convention "
-            "a record was logged under. Reported scores should be read that way.\n"
-            "- **A temporal holdout is much harsher.** Training on 2016-2021 and "
-            "testing on 2022-2023 drops macro F1 from roughly 0.58 to roughly "
-            "0.40 for the gradient-boosting model. Reproduce it with:\n\n"
-            "```bash\nuv run sta train --temporal \\\n"
-            "  --train-years 2016-2021 --test-years 2022-2023\n```\n\n"
-            "Neither figure is a forecast of future accidents. They describe how "
-            "severity was recorded, which is a property of the data rather than "
-            "of the crash."
-        )
+        st.warning(f"{SEVERITY_REGIME_CAVEAT}\n\nMeasured here: {measured}", icon="⚠️")
+        st.markdown(SEVERITY_REGIME_CONSEQUENCE)
         st.dataframe(frame, width="stretch", hide_index=True)
         st.caption("Share of each year's records by severity, computed from the loaded dataset.")
 

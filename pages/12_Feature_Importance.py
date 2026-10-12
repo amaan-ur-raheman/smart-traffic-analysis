@@ -27,6 +27,7 @@ from smart_traffic.ui import (
     page_header,
     require_dataset,
     section,
+    severity_regime_warning,
     sidebar_header,
 )
 from smart_traffic.visualizations import bar_chart
@@ -181,6 +182,8 @@ if st.button("Compute permutation importance", type="primary", key="perm_run"):
             st.error(f"Permutation importance could not be computed: {exc}")
             st.session_state.pop("permutation_result", None)
     st.rerun()
+
+severity_regime_warning()
 
 permutation = st.session_state.get("permutation_result")
 if permutation is None:

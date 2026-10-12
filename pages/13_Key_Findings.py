@@ -18,11 +18,17 @@ from smart_traffic.analytics import (
     generate_findings,
     kpi_cards,
 )
-from smart_traffic.config import PATHS, SETTINGS
+from smart_traffic.config import (
+    PATHS,
+    SETTINGS,
+    SEVERITY_REGIME_CAVEAT,
+    SEVERITY_REGIME_CONSEQUENCE,
+)
 from smart_traffic.db import DB
 from smart_traffic.reporting import (
     build_analytics_bundle,
     findings_frame,
+    load_model_summary,
     provenance,
     write_markdown_report,
 )
@@ -32,6 +38,7 @@ from smart_traffic.ui import (
     page_header,
     require_dataset,
     section,
+    severity_regime_warning,
     sidebar_header,
 )
 
@@ -56,13 +63,21 @@ if not isinstance(spec, FilterSpec):
 
 with st.spinner("Computing findings..."):
     profile = build_profile(spec)
-    model_summary = st.session_state.get("model_summary")
+    # Read the persisted summary directly. It used to come from session state,
+    # which only the Model Evaluation page populates -- so visiting Key Findings
+    # directly reported "no models have been trained" while four sat on disk.
+    model_summary = load_model_summary()
     findings = generate_findings(spec, model_summary=model_summary)
     cards = kpi_cards(spec)
 
 if not findings:
     st.warning("No findings could be computed for the current filters.", icon="⚠️")
     st.stop()
+
+# The generated findings can name a best model and quote its macro F1, so the
+# regime caveat belongs here too rather than only inside the exported report.
+if model_summary:
+    severity_regime_warning()
 
 # -- headline numbers ------------------------------------------------------
 section("Headline numbers")
@@ -204,6 +219,13 @@ if st.button("Generate Markdown report", key="gen_report"):
                 f"| {entry['label']} | {metrics['Macro_F1']:.4f} | "
                 f"{metrics['Balanced_Accuracy']:.4f} | {metrics['Accuracy']:.4f} |"
             )
+        lines += [
+            "",
+            "**These are same-dataset holdout figures, not a forecast.** "
+            + SEVERITY_REGIME_CAVEAT,
+            "",
+            SEVERITY_REGIME_CONSEQUENCE,
+        ]
         model_section = "\n".join(lines)
 
     path = write_markdown_report(
@@ -234,6 +256,7 @@ if st.button("Generate Markdown report", key="gen_report"):
                 "target is heavily imbalanced."
             )),
             ("Limitations", (
+                f"- **{SEVERITY_REGIME_CAVEAT}**\n"
                 "- Severity records traffic impact, not human harm.\n"
                 "- Counts are recorded frequency, not exposure-adjusted risk.\n"
                 "- All relationships are observational associations, not causal.\n"

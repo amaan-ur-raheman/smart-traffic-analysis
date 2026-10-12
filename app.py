@@ -34,6 +34,7 @@ from smart_traffic.ui import (
     page_header,
     require_dataset,
     section,
+    severity_regime_warning,
     sidebar_footer,
     sidebar_header,
 )
@@ -98,6 +99,11 @@ def main() -> None:
         st.metric("Models trained", len(models))
 
     coverage_warning(profile)
+    # The landing page states "Models trained" but shows no metric, so a reader
+    # who goes straight to Model Evaluation meets a headline accuracy figure
+    # before ever meeting its caveat. Put the regime shift on the front page.
+    if models:
+        severity_regime_warning()
 
     # -- problem and scope -------------------------------------------------
     st.markdown("---")

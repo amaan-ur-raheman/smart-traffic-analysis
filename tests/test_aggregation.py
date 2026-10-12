@@ -12,6 +12,7 @@ from smart_traffic.aggregation import (
     add_percentage,
     top_n_mask,
 )
+from smart_traffic.reporting import findings_frame
 
 
 @pytest.fixture
@@ -231,3 +232,72 @@ class TestHelpers:
 
     def test_top_n_mask_on_empty(self) -> None:
         assert top_n_mask(pd.Series([], dtype="object")).empty
+
+
+class TestFindingsReport:
+    """The exported report must build, and must not depend on page order.
+
+    Regression tests for two defects found by exercising the button rather than
+    rendering the page:
+
+    1. The Markdown export crashed on every use because
+       ``DataFrame.to_markdown()`` needs ``tabulate``, which was never
+       declared. It only surfaces on click, so every render-only test passed.
+    2. ``model_summary`` came from session state that only the Model Evaluation
+       page writes, so opening Key Findings directly reported "no models have
+       been trained" while four artefacts sat on disk.
+    """
+
+    def test_markdown_report_builds_with_findings(self, processed_table, tmp_path):
+        from smart_traffic.aggregation import FilterSpec
+        from smart_traffic.analytics import generate_findings
+        from smart_traffic.reporting import write_markdown_report
+
+        findings = generate_findings(FilterSpec())
+        frame = findings_frame(findings)
+        path = write_markdown_report(
+            tmp_path / "report.md",
+            title="T",
+            sections=[("Findings", frame.to_markdown(index=False))],
+        )
+        assert path.exists()
+        assert "## Findings" in path.read_text()
+
+    def test_model_summary_read_from_disk_not_session_state(self, tmp_path):
+        import json
+
+        from smart_traffic.reporting import load_model_summary
+
+        assert load_model_summary(tmp_path) == {}, "absent summary is an empty dict"
+        payload = {"gb": {"label": "GB", "metrics": {"Macro_F1": 0.5791}}}
+        (tmp_path / "training_summary.json").write_text(json.dumps(payload))
+        assert load_model_summary(tmp_path) == payload
+
+    def test_model_summary_tolerates_a_corrupt_file(self, tmp_path):
+        from smart_traffic.reporting import load_model_summary
+
+        (tmp_path / "training_summary.json").write_text("{not json")
+        assert load_model_summary(tmp_path) == {}
+
+    def test_report_carries_the_regime_caveat(self, tmp_path):
+        """A figure that leaves the app loses every caveat shown beside it."""
+        from smart_traffic.config import SEVERITY_REGIME_CAVEAT
+        from smart_traffic.reporting import write_markdown_report
+
+        path = write_markdown_report(
+            tmp_path / "r.md",
+            title="T",
+            sections=[("Limitations", f"- **{SEVERITY_REGIME_CAVEAT}**")],
+        )
+        text = path.read_text()
+        assert "reporting convention" in text
+        assert "0% of 2023" in text
+
+    def test_tabulate_is_declared(self):
+        """to_markdown needs it; declare it so the export cannot fail."""
+        import tomllib
+        from pathlib import Path
+
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        deps = tomllib.loads(pyproject.read_text())["project"]["dependencies"]
+        assert any(d.startswith("tabulate") for d in deps), deps
