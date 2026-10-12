@@ -17,10 +17,16 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from smart_traffic.config import PATHS
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 APP = PROJECT_ROOT / "app.py"
 PAGES = sorted((PROJECT_ROOT / "pages").glob("*.py"))
-PARQUET = PROJECT_ROOT / "data" / "processed" / "accidents.parquet"
+# Resolved through PATHS rather than hardcoded, so the skip marker below agrees
+# with whatever STA_DATA_DIR the application itself is using. A literal path here
+# made the marker check one location while the app read another, so redirecting
+# STA_DATA_DIR produced a spurious failure instead of a clean skip.
+PARQUET = PATHS.accidents_parquet
 
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 
