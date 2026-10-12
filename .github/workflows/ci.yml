@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # The suite is designed to run without the 3 GB dataset: 360 tests pass
+      # and 28 integration tests skip. Redirecting these keeps any accidental
+      # write out of the checked-out tree.
+      STA_DATA_DIR: ${{ github.workspace }}/.ci/data
+      STA_MODELS_DIR: ${{ github.workspace }}/.ci/models
+      STA_ARTIFACTS_DIR: ${{ github.workspace }}/.ci/artifacts
+      STA_LOG_DIR: ${{ github.workspace }}/.ci/logs
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.11
+
+      # --locked fails if pyproject.toml and uv.lock have drifted, rather than
+      # silently re-resolving and hiding the drift.
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      # Note: `ruff format` is deliberately not gated here. The project is
+      # linted but not formatter-normalised, so enabling that check would fail
+      # the whole codebase on its first run. Adopting a formatter is a
+      # deliberate decision, not a CI default.
+
+      - name: Test
+        run: uv run pytest -q
+
+      - name: Verify the app imports and the CLI responds
+        run: |
+          uv run python -c "import smart_traffic; from smart_traffic import modeling, evaluation, clustering; print('imports ok')"
+          uv run sta --help > /dev/null
+          uv run sta status || true
