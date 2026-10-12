@@ -94,6 +94,15 @@ def _parse_years(value: str | None) -> tuple[int, ...] | None:
     return tuple(sorted(set(years))) or None
 
 
+def _split_strategy(args: argparse.Namespace) -> str:
+    """Resolve the split strategy from the mutually exclusive flags."""
+    if getattr(args, "temporal", False):
+        return "temporal"
+    if getattr(args, "geographic", False):
+        return "geographic"
+    return "random"
+
+
 def cmd_train(args: argparse.Namespace) -> int:
     """Train the severity models and persist them."""
     from smart_traffic.db import DB
@@ -113,7 +122,7 @@ def cmd_train(args: argparse.Namespace) -> int:
     config = TrainingConfig(
         sample_rows=args.rows,
         selected_models=tuple(models),
-        split_strategy="temporal" if args.temporal else "random",
+        split_strategy=_split_strategy(args),
         train_years=_parse_years(args.train_years),
         test_years=_parse_years(args.test_years),
     )
@@ -127,6 +136,13 @@ def cmd_train(args: argparse.Namespace) -> int:
         print(
             "Note: severity prevalence shifts sharply across years in this dataset, "
             "so these scores are expected to sit well below the random-split figures."
+        )
+    elif config.split_strategy == "geographic":
+        print(
+            "Geographic holdout: whole states are assigned to the test side by "
+            "crc32(state, seed), so no state appears in both splits. Scores are "
+            "expected to sit below the random-split figures, but well above the "
+            "temporal holdout -- severity-4 recall in particular transfers."
         )
     print(
         f"Training {len(config.selected_models)} model(s) "
@@ -267,6 +283,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train.add_argument(
         "--test-years", help="e.g. 2022-2023"
+    )
+    train.add_argument(
+        "--geographic",
+        action="store_true",
+        help="Hold out whole states instead of a random split. States are "
+             "assigned by crc32(state, seed), never chosen by hand.",
     )
     validate = subparsers.add_parser("validate", help="Print the data-quality report")
     validate.add_argument("--missing", action="store_true",

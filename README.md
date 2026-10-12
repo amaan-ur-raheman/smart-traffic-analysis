@@ -406,6 +406,35 @@ The honest summary: these models predict **how severity was recorded in a given
 reporting era**, not how severe a crash physically was. Neither figure should be
 presented as a forecast.
 
+### A geographic holdout is far less punishing than a temporal one
+
+Whole states are assigned to the test side by `crc32(state, seed)` — never by hand, so the
+split cannot be tuned by looking at the result. Reproduce with:
+
+```bash
+uv run sta train --geographic
+```
+
+**600,000-row sample, seed 42.** Ten states held out (AL, CA, DE, ID, KY, MI, MO, NV, VT, WI),
+39 for training, zero state overlap.
+
+| Model | Random | Geographic | Temporal |
+|---|---:|---:|---:|
+| Gradient Boosting (macro F1) | 0.5838 | **0.4722** | 0.3976 |
+| Decision Tree (macro F1) | 0.5076 | **0.3851** | 0.4240 |
+
+Geography costs about 19% of macro F1; time costs about 32%. The difference is diagnostic:
+
+> **Removing `State` as a feature changes the geographic result by 0.001** (0.3851 → 0.3861).
+
+So the models are **not** memorising states — the drop comes from genuinely harder,
+less-represented states, not from a locality shortcut. That is a meaningfully healthier result
+than the temporal case, and it narrows the diagnosis: the problem is specifically that the
+*label convention changes over time*, not that the models overfit the dataset generally.
+
+Severity-4 recall is the one thing that transfers well across geography (0.39 on held-out
+states versus 0.40 on the random split) even though its F1 stays near 0.30.
+
 ### Can severity 4 be improved? No — not without destroying precision
 
 Severity 4 has the weakest F1 (0.300), so it is worth asking whether the decision
@@ -475,7 +504,7 @@ the terminal.
 ## 11. Running tests and lint checks
 
 ```bash
-uv run pytest            # 372 tests
+uv run pytest            # 379 tests
 uv run pytest -v         # verbose
 uv run pytest tests/test_modeling.py -k leakage
 uv run ruff check .
@@ -599,7 +628,7 @@ smart-traffic-analysis/
 │
 ├── scripts/
 │   └── experiment.py          Measured model-improvement harness
-├── tests/                     372 tests
+├── tests/                     379 tests
 ├── data/
 │   ├── raw/                   ← place US_Accidents_March23.csv here
 │   ├── processed/             Generated Parquet + DuckDB catalogue

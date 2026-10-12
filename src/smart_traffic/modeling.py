@@ -22,6 +22,7 @@ class weights and every comparison uses macro F1 and balanced accuracy.
 from __future__ import annotations
 
 import json
+import zlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -171,6 +172,10 @@ class TrainingConfig:
     train_years: tuple[int, ...] | None = None
     #: Calendar years held out for testing when ``split_strategy="temporal"``.
     test_years: tuple[int, ...] | None = None
+    #: Share of states routed to the test side when
+    #: ``split_strategy="geographic"``. States are assigned by a hash rather than
+    #: chosen by hand, so the split cannot be tuned by looking at the result.
+    geographic_test_fraction: float = 0.25
 
     def all_features(self) -> list[str]:
         """Return the combined predictor list."""
@@ -454,10 +459,12 @@ def load_training_data(
     from smart_traffic.sampling import draw_sample
 
     columns = ["ID", *config.all_features(), schema.SEVERITY]
-    if config.split_strategy == "temporal" and "Year" not in columns:
-        # Year is needed to decide the split even when it is not a predictor;
-        # `split_data` drops it alongside every other non-feature column.
-        columns = ["ID", "Year", *columns[1:]]
+    if config.split_strategy in {"temporal", "geographic"}:
+        # The partition key is needed even when it is not a predictor; split_data
+        # drops it alongside every other non-feature column.
+        key = "Year" if config.split_strategy == "temporal" else schema.STATE
+        if key not in columns:
+            columns = ["ID", key, *columns[1:]]
     # A temporal run must not sample across all years and only then split, or
     # earlier years would land in the test set. Restrict the draw to the union
     # of both periods so the split itself decides which rows are held out.
@@ -469,6 +476,8 @@ def load_training_data(
         years = tuple(sorted({*config.train_years, *config.test_years}))
     else:
         years = None
+    # A geographic split needs every state drawn; the partition happens in
+    # split_data. Filtering here by year only would be meaningless.
     spec = FilterSpec(years=years) if years else FilterSpec()
     draw = draw_sample(
         columns,
@@ -522,12 +531,14 @@ def split_data(
 
     features = config.all_features()
     present = [f for f in features if f in frame.columns]
-    if config.split_strategy == "temporal" and "Year" not in present:
-        # Needed to partition by period; removed again once the split is made.
-        present = [*present, "Year"]
-        year_is_predictor = False
-    else:
-        year_is_predictor = "Year" in present
+    partition_key = {
+        "temporal": "Year",
+        "geographic": schema.STATE,
+    }.get(config.split_strategy)
+    key_is_predictor = partition_key is not None and partition_key in present
+    if partition_key is not None and partition_key not in present:
+        # Needed to partition; removed again once the split is made.
+        present = [*present, partition_key]
     if len(present) < len(features):
         missing = [f for f in features if f not in frame.columns]
         logger.warning("Dropping %s absent feature(s): %s", len(missing), ", ".join(missing))
@@ -537,13 +548,16 @@ def split_data(
     keep = y.notna()
     x, y = x[keep], y[keep].astype(int)
 
-    if config.split_strategy == "temporal":
-        x_train, x_test, y_train, y_test = _temporal_split(x, y, config)
-        if not year_is_predictor:
-            # Year was carried only to decide the split; it is not a predictor
-            # in this configuration, so it must not leak into the fitted model.
-            x_train = x_train.drop(columns=["Year"], errors="ignore")
-            x_test = x_test.drop(columns=["Year"], errors="ignore")
+    if config.split_strategy in {"temporal", "geographic"}:
+        if config.split_strategy == "temporal":
+            x_train, x_test, y_train, y_test = _temporal_split(x, y, config)
+        else:
+            x_train, x_test, y_train, y_test = _geographic_split(x, y, config)
+        if not key_is_predictor:
+            # The key was carried only to decide the split; it is not a
+            # predictor here, so it must not leak into the fitted model.
+            x_train = x_train.drop(columns=[partition_key], errors="ignore")
+            x_test = x_test.drop(columns=[partition_key], errors="ignore")
         return x_train, x_test, y_train, y_test
 
     stratify = y if y.value_counts().min() >= 2 else None
@@ -593,6 +607,65 @@ def _temporal_split(
         f"{min(test_years)}-{max(test_years)}", int(in_test.sum()),
     )
     return x[in_train], x[in_test], y[in_train], y[in_test]
+
+
+def _geographic_split(
+    x: pd.DataFrame,
+    y: pd.Series,
+    config: TrainingConfig,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """Split so no state appears on both sides.
+
+    States are assigned to the test side by ``crc32(state, seed)``, which makes
+    the split reproducible and independent of state size. Choosing states by hand
+    -- "hold out California" or "hold out the small ones" -- invites picking a
+    split that flatters the result; a fixed hash cannot.
+
+    ``crc32`` rather than Python's built-in :func:`hash`, which is salted per
+    process and silently produced a *different* partition on every run -- the
+    exact opposite of reproducible.
+
+    Args:
+        x: Feature frame carrying the state column.
+        y: Target series.
+        config: Supplies the seed and the test fraction.
+
+    Returns:
+        ``(X_train, X_test, y_train, y_test)``.
+
+    Raises:
+        ValueError: If the state column is missing, or the hash assigns
+            everything to one side.
+    """
+    if schema.STATE not in x.columns:
+        raise ValueError(
+            f"A geographic split needs the {schema.STATE!r} column, which is not "
+            "in the modelling frame."
+        )
+    fraction = float(config.geographic_test_fraction)
+    if not 0.0 < fraction < 1.0:
+        raise ValueError(
+            f"geographic_test_fraction must be between 0 and 1; got {fraction}."
+        )
+
+    states = pd.Series(x[schema.STATE].astype(str).to_numpy())
+    # crc32 is stable across processes, unlike Python's salted hash().
+    buckets = states.map(
+        lambda s: zlib.crc32(f"{s}:{config.seed}".encode()) % 10_000
+    )
+    in_test = buckets < int(fraction * 10_000)
+    if not in_test.any() or in_test.all():
+        raise ValueError(
+            "The hash assigned every state to one side; adjust "
+            "geographic_test_fraction or the seed."
+        )
+
+    held_out = sorted(set(states[in_test]))
+    logger.info(
+        "Geographic split: %d state(s) held out (%s), %d training state(s)",
+        len(held_out), ", ".join(held_out), states[~in_test].nunique(),
+    )
+    return x[~in_test], x[in_test], y[~in_test], y[in_test]
 
 
 def train_models(

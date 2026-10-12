@@ -20,8 +20,9 @@
 | Does the ML pipeline work? | **Yes** — all four models trained, evaluated, saved, reloaded and predicted |
 | Was leakage checked? | **Yes** — 10 forbidden vectors checked; none present; preprocessing proven train-only |
 | Was temporal validation performed? | **Yes** — and it materially changed the conclusion (§F) |
+| Was geographic validation performed? | **Yes** — 10 states held out by hash (§F) |
 
-**Six genuine defects were found and fixed.** Each produced a false user-facing number, an
+**Seven genuine defects were found and fixed.** Each produced a false user-facing number, an
 unrecoverable crash, or a silently wrong result, and none was covered by the existing suite:
 
 1. The PCA page claimed "Components for 80% variance: 2" when 2 components held only 40.3%.
@@ -34,8 +35,10 @@ unrecoverable crash, or a silently wrong result, and none was covered by the exi
    declared, so the button crashed on every use.
 6. The report claimed "no models have been trained" when four artefacts were on disk, because
    the figures depended on which page the user had opened first.
+7. The geographic split added by this audit used Python's per-process-salted `hash()`, so it
+   held out a different set of states on every run — caught before any result was published.
 
-Regression tests rose from **338 → 372** (+34).
+Regression tests rose from **338 → 379** (+41).
 
 ### The finding that changed the project's conclusions
 
@@ -66,6 +69,12 @@ Accuracy *rises* while macro F1 falls by a third, because 2022–2023 is 91.7% s
 This caveat is now carried on all six pages that display model metrics **and** in the exported
 Markdown report — the artefact most likely to leave this project out of context.
 
+A geographic holdout was added afterwards and tells a *different, more encouraging* story:
+holding out whole states costs about 19% of macro F1 versus 32% for time, and removing
+`State` as a feature changes the geographic result by 0.001 — so the models are not
+memorising localities. The failure is specifically that the label convention changes over
+time, not that the models overfit the dataset generally.
+
 **Most important remaining risks** are stated honestly in §I. The headline: the dataset records
 **reported traffic impact, not injuries or fatalities**; the headline accuracy figure was
 dominated by the 79.7% severity-2 majority class and does not survive a temporal holdout; and
@@ -86,7 +95,7 @@ Code inspection alone is never recorded as PASS.
 | Lockfile consistency | `uv sync --locked` | PASS | exit 0, "Resolved 57 packages", no re-resolution | — |
 | Python version | `uv run python --version` | PASS | `3.11.11`, matches `.python-version` | — |
 | Lint | `uv run ruff check .` | PASS | `All checks passed!` | — |
-| Test suite | `uv run pytest` | PASS | `372 passed, 1 warning in 43.19s` | 1 sklearn warning (benign, see §I) |
+| Test suite | `uv run pytest` | PASS | `379 passed, 1 warning in 87.25s` | 1 sklearn warning (benign, see §I) |
 | App launch | `uv run streamlit run app.py` | PASS | HTTP 200, `_stcore/health` = `ok` | — |
 | CLI | `uv run sta status` | PASS | coverage, seed 42, 4 models listed | — |
 | No Jupyter/Colab dependency | grep for `jupyter|colab|requirements.txt\|conda\|poetry` | PASS | zero matches | — |
@@ -187,6 +196,9 @@ Code inspection alone is never recorded as PASS.
 | **Prediction confidence** | all 4 calibrated models | **FAIL → FIXED** | belonged to wrong class | Bug 2, §E |
 | **Temporal holdout** | 2016–2021 → 2022–2023, 600k rows | PASS | macro F1 0.5791 → 0.3976 | §F |
 | Temporal split disjointness | index overlap + year overlap | PASS | 0 overlap both | §F |
+| **Geographic holdout** | 10 states held out by hash, 600k rows | PASS | macro F1 0.5838 → 0.4722 | §F |
+| Geographic split disjoint | state overlap + index overlap | PASS | 0 overlap both | §F |
+| Split reproducible across processes | 3 runs + varying `PYTHONHASHSEED` | PASS | identical partition | §F, Bug 7 |
 | Markdown report builds | clicked the button | **FAIL → FIXED** | crashed; `tabulate` undeclared | Bug 5, §E |
 | Report correct without visiting page 11 | clicked button on a fresh session | **FAIL → FIXED** | said "no models trained" | Bug 6, §E |
 
@@ -247,8 +259,8 @@ Code inspection alone is never recorded as PASS.
 | `uv run pytest` | in README | PASS | present & verified | — |
 | `uv run ruff check .` | in README | PASS | present & verified | — |
 | `uv sync --locked` | in README | **FAIL → FIXED** | README said `uv sync` | Fixed, §E |
-| Test count accurate | README vs suite | **FAIL → FIXED** | said 338, actual 372 | Fixed, §E |
-| README test count current | README vs suite | PASS | README and suite both say 372 | — |
+| Test count accurate | README vs suite | **FAIL → FIXED** | said 338, actual 379 | Fixed, §E |
+| README test count current | README vs suite | PASS | README and suite both say 379 | — |
 | No competing package manager | grep | PASS | none | — |
 | Model table matches artifacts | compared to `training_summary.json` | PASS | all 3 models exact | — |
 | Prerequisites / troubleshooting / limitations | section review | PASS | §4, §15, §16 present | — |
@@ -262,7 +274,7 @@ Code inspection alone is never recorded as PASS.
 | `uv sync --locked` | 0 | `Resolved 57 packages` / `Checked 52 packages` — no re-resolution |
 | `uv run python --version` | 0 | `Python 3.11.11` |
 | `uv run ruff check .` | 0 | `All checks passed!` |
-| `uv run pytest` | 0 | `372 passed, 1 warning in 43.19s` |
+| `uv run pytest` | 0 | `379 passed, 1 warning in 87.25s` |
 | `uv run pytest tests/test_streamlit_app.py` | 0 | `43 passed in 40.56s` |
 | `uv run streamlit run app.py` (port 8911) | 0 | HTTP 200; `_stcore/health` → `ok` |
 | `uv run sta status` | 0 | coverage 2016-01-14 → 2023-03-31, seed 42, 4 models |
@@ -400,6 +412,18 @@ Additional facts established:
 - **Regression test added:** `TestFindingsReport::test_model_summary_read_from_disk_not_session_state` and `::test_model_summary_tolerates_a_corrupt_file`.
 - **Retest:** 5/5 pass; opening Key Findings first now produces the correct four-model table.
 
+### Bug 7 — Geographic split was not reproducible (found in newly written code)
+
+- **Severity:** Major (a validation feature that silently varied between runs)
+- **File / function:** `src/smart_traffic/modeling.py::_geographic_split`
+- **Root cause:** states were assigned with Python's built-in `hash()`, which is salted per process. Three consecutive runs held out 10, 14 and 11 different states.
+- **Impact:** the feature would have reported a different result every time it ran, directly contradicting its own docstring and the project's reproducibility guarantee. Caught only because consecutive runs printed *different* held-out state lists.
+- **Fix:** `zlib.crc32(f"{state}:{seed}")`, which is stable across processes. Verified identical across repeated runs and across differing `PYTHONHASHSEED` values.
+- **Regression test added:** `TestGeographicSplit::test_partition_does_not_depend_on_python_hash_seed` spawns subprocesses under three different hash salts and asserts a single result; `::test_partition_is_reproducible_across_calls` covers repeated calls in one process.
+- **Retest:** 7/7 geographic tests pass; partition verified stable.
+
+Worth stating plainly: this defect was introduced *by this audit's own new code*, and was found before any result was reported. It is listed here for the same reason the others are — the reproducibility claim was false until it was tested.
+
 ### Documentation corrections
 
 | Issue | Fix |
@@ -534,6 +558,44 @@ records — roughly twelve false alarms per true detection. The shipped threshol
 near the best point on this curve. Severity 4 is not fixable by reweighting with the available
 features; this is a property of the data.
 
+### Geographic validation (added to close the last stated gap)
+
+```bash
+uv run sta train --geographic
+```
+
+States are assigned to the test side by `crc32(state, seed)` rather than chosen by hand, so
+the split cannot be tuned by inspecting the result. With seed 42 and 600,000 rows, ten states
+were held out (AL, CA, DE, ID, KY, MI, MO, NV, VT, WI) and 39 kept for training; state overlap
+between the two sides is zero by construction.
+
+| Model | Random | Geographic | Temporal |
+|---|---:|---:|---:|
+| Gradient Boosting (macro F1) | 0.5838 | **0.4722** | 0.3976 |
+| Decision Tree (macro F1) | 0.5076 | **0.3851** | 0.4240 |
+
+The decisive diagnostic:
+
+| Variant | Macro F1 |
+|---|---:|
+| Geographic split, `State` as a feature | 0.3851 |
+| Geographic split, `State` removed entirely | 0.3861 |
+
+Removing the state column changes the result by **0.001**. The models are therefore not
+memorising localities — the degradation comes from genuinely harder, less-represented states.
+This narrows the diagnosis considerably: the temporal failure is about the *label convention
+changing over time*, not about general overfitting.
+
+Severity-4 recall transfers well across geography (0.39 held-out versus 0.40 random) even
+though its F1 remains near 0.30, since precision is what limits it.
+
+**A defect was found and fixed in this feature before it was measured.** The first
+implementation assigned states with Python's built-in `hash()`, which is salted per process.
+Three runs produced three different partitions — the precise opposite of the reproducibility
+the docstring claimed. Replaced with `zlib.crc32`, verified stable across processes and
+across `PYTHONHASHSEED` values; a regression test spawns subprocesses under different salts to
+keep it that way.
+
 ### Remaining limitations
 
 - Metrics are **held-out same-dataset** estimates, not temporal or geographic forecasting.
@@ -600,9 +662,8 @@ guard was added to `save_models` so it cannot recur silently.
 
 ### Minor defects / open items
 
-1. **No geographic holdout.** Temporal validation was added; validating by region was not. A
-   model could still be memorising local reporting conventions. *Improvement: add a
-   geographic split alongside the temporal one.*
+1. **No geographic holdout** — **closed since the previous revision.** Implemented and
+   measured; see §F. The result ruled out state memorisation.
 2. **One sklearn `UserWarning`** in `test_absent_class_still_appears_in_the_matrix` ("A single
    label was found…"). The code already passes `labels=` explicitly; the warning comes from an
    internal `classification_report` call. Benign, but noisy.
@@ -649,7 +710,7 @@ inspected:
 
 - The application launches and serves HTTP 200 / health `ok`.
 - `uv sync --locked` succeeds without re-resolving, so the environment is reproducible.
-- 372 tests pass; Ruff is clean.
+- 379 tests pass; Ruff is clean.
 - The original CSV's reference statistics were **independently recomputed** and matched
   exactly; the processed Parquet is faithful to the source.
 - Every derived feature, aggregation denominator, statistical metric, PCA quantity and
@@ -662,9 +723,10 @@ inspected:
 - **Temporal validation was performed**, closing what the previous revision named as the
   single largest methodological gap.
 
-**Six defects were found by this audit**, none covered by the original 338-test suite. Three
+**Seven defects were found by this audit**, none covered by the original 338-test suite. Three
 produced false or misleading figures on screen; two broke a primary export; one crashed the
-app behind a redacted error. All are now fixed with regression tests (338 → 372).
+app behind a redacted error; and one was a reproducibility defect in this audit's own new
+code, caught before its result was published. All are now fixed with regression tests (338 → 372).
 
 That six were found is itself the most important finding of this audit. It demonstrates
 concretely that "all tests pass" was never sufficient evidence of correctness here. Two of
@@ -682,8 +744,10 @@ page displaying model metrics and in the exported report.
 
 ### Why this is not a plain "VERIFIED"
 
-- **No geographic holdout.** Temporal validation exists; region-based validation does not, so
-  local reporting conventions remain a possible shortcut.
+- **No geographic holdout** was the previous revision's first named limitation; it is now
+  implemented and measured (§F). What remains is the *finding* it produced: the label itself is
+  not a stable target across reporting eras, so there is no fixed objective to optimise toward
+  for deployment.
 - **The label is not a stable target.** Because the recording convention changes over time,
   there is no fixed objective toward which the models can be optimised for deployment.
 - **Severity 4 remains at F1 0.300** and provably cannot be improved by reweighting with the

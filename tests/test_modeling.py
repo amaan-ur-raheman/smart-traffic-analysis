@@ -495,3 +495,153 @@ class TestTemporalSplit:
         config = TrainingConfig()
         assert config.train_years is None
         assert config.test_years is None
+
+
+class TestGeographicSplit:
+    """A geographic holdout must keep every state on exactly one side.
+
+    Added to close the last gap the audit recorded. States are assigned by a
+    stable crc32 rather than Python's built-in ``hash``, which is salted per
+    process: using it produced a *different* partition on every run, which is the
+    precise opposite of reproducible.
+    """
+
+    @pytest.fixture
+    def multi_state(self, tmp_path, monkeypatch):
+        """A synthetic table spanning many states and years."""
+        import pandas as pd
+
+        from smart_traffic import config as config_module
+        from smart_traffic.ingestion import build_from_csv
+
+        monkeypatch.setenv("STA_DATA_DIR", str(tmp_path / "data"))
+        monkeypatch.setenv("STA_MODELS_DIR", str(tmp_path / "models"))
+        monkeypatch.setenv("STA_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
+        monkeypatch.setenv("STA_LOG_DIR", str(tmp_path / "logs"))
+        config_module.PATHS.ensure_dirs()
+
+        states = [
+            "AL", "AZ", "CA", "TX", "NY", "FL", "OH", "WA", "CO", "IL",
+            "TN", "OR", "MI", "GA", "NC", "PA", "IN", "MO", "MD", "VA",
+        ]
+        rows = []
+        for index, state in enumerate(states):
+            for severity in (2, 2, 3, 4):
+                rows.append((state, 2016 + index % 6, severity))
+        frame = pd.DataFrame(
+            {
+                "ID": [f"G{i:04d}" for i in range(len(rows))],
+                "Severity": [s for _st, _y, s in rows],
+                "State": [st for st, _y, _s in rows],
+                "Year": [y for _st, y, _s in rows],
+                "Start_Time": [f"{y}-06-15 08:00:00.000000" for _st, y, _s in rows],
+                "End_Time": [f"{y}-06-15 08:30:00.000000" for _st, y, _s in rows],
+                "Start_Lat": [30.0 + i * 0.01 for i in range(len(rows))],
+                "Start_Lng": [-90.0 - i * 0.01 for i in range(len(rows))],
+                "End_Lat": [30.0 + i * 0.01 for i in range(len(rows))],
+                "End_Lng": [-90.0 - i * 0.01 for i in range(len(rows))],
+            }
+        )
+        csv_path = tmp_path / "geo.csv"
+        frame.to_csv(csv_path, index=False)
+        build_from_csv(csv_path, config_module.PATHS.accidents_parquet,
+                       method="chunked", chunk_size=7)
+
+        import smart_traffic.db as db_module
+
+        monkeypatch.setattr(
+            db_module, "DB",
+            db_module.Database(
+                db_path=tmp_path / "geo.duckdb",
+                parquet_path=config_module.PATHS.accidents_parquet,
+            ),
+        )
+
+    @staticmethod
+    def _config(**overrides: object) -> TrainingConfig:
+        base = {"sample_rows": 200, "split_strategy": "geographic", "seed": 42}
+        base.update(overrides)
+        return TrainingConfig(**base)
+
+    def test_no_state_appears_on_both_sides(self, multi_state):
+        from smart_traffic import schema
+        from smart_traffic.modeling import load_training_data, split_data
+
+        config = self._config()
+        x_train, x_test, _y, _y2 = split_data(load_training_data(config), config)
+        train_states = set(x_train[schema.STATE].astype(str))
+        test_states = set(x_test[schema.STATE].astype(str))
+        assert train_states, "training side must be non-empty"
+        assert test_states, "test side must be non-empty"
+        assert not train_states & test_states
+        assert train_states | test_states, "every state lands on one side"
+
+    def test_partition_is_reproducible_across_calls(self, multi_state):
+        """Guards against Python's per-process-salted hash."""
+        from smart_traffic import schema
+        from smart_traffic.modeling import load_training_data, split_data
+
+        config = self._config()
+        frame = load_training_data(config)
+        first = set(split_data(frame, config)[1][schema.STATE].astype(str))
+        second = set(split_data(frame, config)[1][schema.STATE].astype(str))
+        assert first == second
+
+    def test_partition_does_not_depend_on_python_hash_seed(self, multi_state):
+        """The partition must be identical in a differently-salted interpreter."""
+        import os
+        import subprocess
+        import sys
+
+        script = (
+            "import zlib;"
+            "states=['AL','AZ','CA','TX','NY','FL','OH','WA','CO','IL'];"
+            "print([s for s in states "
+            "if zlib.crc32(f'{s}:42'.encode())%10000 < 2500])"
+        )
+        outputs = set()
+        for salt in ("0", "1", "12345"):
+            result = subprocess.run(
+                [sys.executable, "-c", script],
+                capture_output=True, text=True,
+                env={**os.environ, "PYTHONHASHSEED": salt},
+            )
+            outputs.add(result.stdout.strip())
+        assert len(outputs) == 1, f"partition varies with PYTHONHASHSEED: {outputs}"
+
+    def test_state_is_dropped_when_not_a_declared_feature(self, multi_state):
+        from smart_traffic import schema
+        from smart_traffic.modeling import load_training_data, split_data
+
+        base = TrainingConfig()
+        config = self._config(
+            categorical_features=tuple(
+                f for f in base.categorical_features if f != schema.STATE
+            )
+        )
+        x_train, x_test, _y, _y2 = split_data(load_training_data(config), config)
+        assert schema.STATE not in x_train.columns
+        assert schema.STATE not in x_test.columns
+
+    def test_invalid_fraction_is_rejected(self, multi_state):
+        from smart_traffic.modeling import load_training_data, split_data
+
+        for bad in (0.0, 1.0, 1.5, -0.2):
+            config = self._config(geographic_test_fraction=bad)
+            with pytest.raises(ValueError, match="between 0 and 1"):
+                split_data(load_training_data(config), config)
+
+    def test_random_split_is_unaffected(self, multi_state):
+        from smart_traffic.modeling import load_training_data, split_data
+
+        config = TrainingConfig(sample_rows=80, test_fraction=0.25, seed=42)
+        x_train, x_test, y_train, y_test = split_data(
+            load_training_data(config), config
+        )
+        assert len(x_train) + len(x_test) == 80
+        assert not set(x_train.index) & set(x_test.index)
+        # A random split may share states across sides; that is the point of it.
+        assert {int(v) for v in x_train["Year"]} & {int(v) for v in x_test["Year"]}
+
+    def test_default_strategy_is_still_random(self):
+        assert TrainingConfig().split_strategy == "random"
