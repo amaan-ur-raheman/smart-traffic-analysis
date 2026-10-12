@@ -87,7 +87,12 @@ with tab_train:
 
     controls = st.columns([1, 1, 1.4])
     train_rows = controls[0].number_input(
-        "Training sample size", 5_000, 1_000_000, 300_000, step=5_000,
+        # Default from SETTINGS so the UI, the CLI and the documented protocol
+        # all agree. It was hardcoded to 300_000 here, so a user training from
+        # the UI silently ran a different protocol than the README reports and
+        # overwrote the canonical artefacts with worse numbers.
+        "Training sample size", 5_000, 1_000_000,
+        SETTINGS.sample_training_rows, step=5_000,
         help="Rows drawn for training. Larger is more stable but slower.",
     )
     test_fraction = controls[1].slider(

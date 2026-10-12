@@ -112,3 +112,58 @@ class TestNoDatasetState:
         assert test.error or test.info, (
             f"{page.name} must show a message when no dataset is available"
         )
+
+
+class TestTrainingDefaultsAgree:
+    """The UI, the CLI and the documented protocol must use one sample size.
+
+    Regression test. The severity-prediction page hardcoded 300,000 while
+    SETTINGS, the CLI default and the README all said 400,000. Training from the
+    browser therefore ran a different protocol than the documentation and
+    silently overwrote the canonical artefacts -- observed twice during an audit
+    before the cause was tracked down.
+    """
+
+    def test_config_default_is_the_documented_value(self) -> None:
+        from smart_traffic.config import SETTINGS
+
+        assert SETTINGS.sample_training_rows == 400_000
+
+    def test_cli_default_comes_from_settings(self, capsys) -> None:
+
+        from smart_traffic.cli import build_parser
+        from smart_traffic.config import SETTINGS
+
+        parser = build_parser()
+        args = parser.parse_args(["train"])
+        assert args.rows == SETTINGS.sample_training_rows
+
+    def test_page_has_no_hardcoded_sample_size(self) -> None:
+        """A literal in the training widget is what caused the drift."""
+        import re
+
+        page = APP.parent / "pages" / "10_Severity_Prediction.py"
+        lines = page.read_text().splitlines()
+        label_at = next(
+            (i for i, line in enumerate(lines) if '"Training sample size"' in line),
+            None,
+        )
+        assert label_at is not None, "training sample widget not found"
+        # The widget call starts on an earlier line; capture the whole argument
+        # list so a stray literal inside it would be visible.
+        start = max(
+            (i for i in range(label_at + 1) if "number_input(" in lines[i]),
+            default=label_at,
+        )
+        end = next(
+            (i for i in range(start, len(lines)) if lines[i].strip() == ")"),
+            label_at + 6,
+        )
+        args = "\n".join(lines[start : end + 1])
+        assert "SETTINGS.sample_training_rows" in args, (
+            "the training sample default must come from SETTINGS"
+        )
+        literals = [
+            m for m in re.findall(r"\b\d{5,}\b", args) if m != "1000000"
+        ]
+        assert not literals, f"hardcoded sample size(s) reintroduced: {literals}"
