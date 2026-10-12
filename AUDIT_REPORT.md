@@ -430,7 +430,7 @@ Worth stating plainly: this defect was introduced *by this audit's own new code*
 |---|---|
 | README documented `uv sync`, not `uv sync --locked` | Now documents `--locked` and explains why it is preferred |
 | README did not mention the temporal holdout | §"These numbers are optimistic" added with the measured comparison |
-| README claimed "338 tests" | Corrected to **372** |
+| README claimed "338 tests" | Corrected, and re-corrected to **379** after new tests landed |
 
 *Note on false alarms:* several apparent failures during this audit traced to mistakes in my
 own verification scripts, not the project — an expected-count error (CA row count), an
