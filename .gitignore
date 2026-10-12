@@ -50,3 +50,13 @@ Thumbs.db
 # ---- Env / secrets ----
 .env
 .env.*
+
+# ---- Teaching workspace (personal, not part of the project) ----
+# Generated lessons, records and reference material for learning this codebase.
+MISSION.md
+NOTES.md
+RESOURCES.md
+lessons/
+reference/
+learning-records/
+assets/
