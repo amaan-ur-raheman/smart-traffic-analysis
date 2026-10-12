@@ -19,6 +19,9 @@ dependencies = [
     "scipy>=1.15.0",
     "streamlit>=1.40.0",
     "streamlit-folium>=0.24.0",
+    # Required by pandas.DataFrame.to_markdown, used for the findings report.
+    # Declared explicitly so the export cannot fail on a missing optional dep.
+    "tabulate>=0.9.0",
 ]
 
 [dependency-groups]

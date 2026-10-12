@@ -166,6 +166,34 @@ def validation_summary_frame(report: Any) -> pd.DataFrame:
     return report.to_dataframe()
 
 
+def load_model_summary(models_dir: Path | None = None) -> dict[str, Any]:
+    """Read the persisted training summary, or an empty dict when absent.
+
+    Both pages that report model metrics read the file themselves rather than
+    sharing session state: session state would make the figures depend on which
+    page a user happened to open first, and a page reached directly would claim
+    no models exist while the artefacts sit on disk.
+
+    Args:
+        models_dir: Directory holding ``training_summary.json``. Defaults to
+            the configured models directory.
+
+    Returns:
+        The decoded summary, or ``{}`` when the file is missing or unreadable.
+    """
+    import json
+
+    from smart_traffic.config import PATHS
+
+    path = Path(models_dir or PATHS.models) / "training_summary.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
 def write_markdown_report(
     path: Path,
     *,
