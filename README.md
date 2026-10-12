@@ -504,7 +504,7 @@ the terminal.
 ## 11. Running tests and lint checks
 
 ```bash
-uv run pytest            # 379 tests
+uv run pytest            # 388 tests
 uv run pytest -v         # verbose
 uv run pytest tests/test_modeling.py -k leakage
 uv run ruff check .
@@ -628,7 +628,7 @@ smart-traffic-analysis/
 │
 ├── scripts/
 │   └── experiment.py          Measured model-improvement harness
-├── tests/                     379 tests
+├── tests/                     388 tests
 ├── data/
 │   ├── raw/                   ← place US_Accidents_March23.csv here
 │   ├── processed/             Generated Parquet + DuckDB catalogue

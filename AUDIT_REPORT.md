@@ -14,7 +14,7 @@
 | Question | Answer |
 |---|---|
 | Does the application launch? | **Yes** — `uv run streamlit run app.py`, HTTP 200, health `ok` |
-| Do the tests pass? | **Yes** — 379 passed, 0 failed, exit 0 |
+| Do the tests pass? | **Yes** — 388 passed, 0 failed, exit 0 |
 | Does Ruff pass? | **Yes** — `All checks passed!`, exit 0 |
 | Was the **original dataset fully validated**? | **Yes** — independently recomputed from the 3 GB CSV; every reference value matched |
 | Does the ML pipeline work? | **Yes** — all four models trained, evaluated, saved, reloaded and predicted |
@@ -38,7 +38,7 @@ unrecoverable crash, or a silently wrong result, and none was covered by the exi
 7. The geographic split added by this audit used Python's per-process-salted `hash()`, so it
    held out a different set of states on every run — caught before any result was published.
 
-Regression tests rose from **338 → 379** (+41).
+Regression tests rose from **338 → 388** (+50).
 
 ### The finding that changed the project's conclusions
 
@@ -95,7 +95,7 @@ Code inspection alone is never recorded as PASS.
 | Lockfile consistency | `uv sync --locked` | PASS | exit 0, "Resolved 57 packages", no re-resolution | — |
 | Python version | `uv run python --version` | PASS | `3.11.11`, matches `.python-version` | — |
 | Lint | `uv run ruff check .` | PASS | `All checks passed!` | — |
-| Test suite | `uv run pytest` | PASS | `379 passed, 1 warning in 87.25s` | 1 sklearn warning (benign, see §I) |
+| Test suite | `uv run pytest` | PASS | `388 passed, 0 warnings in 46.85s` | none |
 | App launch | `uv run streamlit run app.py` | PASS | HTTP 200, `_stcore/health` = `ok` | — |
 | CLI | `uv run sta status` | PASS | coverage, seed 42, 4 models listed | — |
 | No Jupyter/Colab dependency | grep for `jupyter|colab|requirements.txt\|conda\|poetry` | PASS | zero matches | — |
@@ -259,8 +259,8 @@ Code inspection alone is never recorded as PASS.
 | `uv run pytest` | in README | PASS | present & verified | — |
 | `uv run ruff check .` | in README | PASS | present & verified | — |
 | `uv sync --locked` | in README | **FAIL → FIXED** | README said `uv sync` | Fixed, §E |
-| Test count accurate | README vs suite | **FAIL → FIXED** | said 338, actual 379 | Fixed, §E |
-| README test count current | README vs suite | PASS | README and suite both say 379 | — |
+| Test count accurate | README vs suite | **FAIL → FIXED** | said 338, actual 379 at the time | Fixed, §E; re-verified at 388 |
+| README test count current | README vs suite | PASS | README and suite both say 388 | — |
 | No competing package manager | grep | PASS | none | — |
 | Model table matches artifacts | compared to `training_summary.json` | PASS | all 3 models exact | — |
 | Prerequisites / troubleshooting / limitations | section review | PASS | §4, §15, §16 present | — |
@@ -274,7 +274,7 @@ Code inspection alone is never recorded as PASS.
 | `uv sync --locked` | 0 | `Resolved 57 packages` / `Checked 52 packages` — no re-resolution |
 | `uv run python --version` | 0 | `Python 3.11.11` |
 | `uv run ruff check .` | 0 | `All checks passed!` |
-| `uv run pytest` | 0 | `379 passed, 1 warning in 87.25s` |
+| `uv run pytest` | 0 | `388 passed, 0 warnings in 46.85s` |
 | `uv run pytest tests/test_streamlit_app.py` | 0 | `43 passed in 40.56s` |
 | `uv run streamlit run app.py` (port 8911) | 0 | HTTP 200; `_stcore/health` → `ok` |
 | `uv run sta status` | 0 | coverage 2016-01-14 → 2023-03-31, seed 42, 4 models |
@@ -430,7 +430,7 @@ Worth stating plainly: this defect was introduced *by this audit's own new code*
 |---|---|
 | README documented `uv sync`, not `uv sync --locked` | Now documents `--locked` and explains why it is preferred |
 | README did not mention the temporal holdout | §"These numbers are optimistic" added with the measured comparison |
-| README claimed "338 tests" | Corrected, and re-corrected to **379** after new tests landed |
+| README claimed "338 tests" | Corrected twice: to **379**, then to **388** after the temporal and geographic holdout tests landed |
 
 *Note on false alarms:* several apparent failures during this audit traced to mistakes in my
 own verification scripts, not the project — an expected-count error (CA row count), an
@@ -598,10 +598,21 @@ keep it that way.
 
 ### Remaining limitations
 
-- Metrics are **held-out same-dataset** estimates, not temporal or geographic forecasting.
-  No train/test split by time or region was performed, so no generalisation claim is made.
+- **Temporal and geographic holdouts were performed** (see above), and both degrade
+  performance. On the 600,000-row holdout runs, gradient-boosting macro F1 falls from
+  **0.5838** (random) to **0.4722** geographically and **0.3976** temporally. Note these
+  differ slightly from the canonical 0.5791 reported elsewhere, because the holdouts draw
+  600,000 rows while the canonical training run draws 400,000 — the comparison within this
+  bullet is internally consistent, and the headline random-split figure must not be quoted
+  without its holdout counterpart.
+- The temporal result is a floor, not a forecast. Testing stops at 2023-03-31, so
+  behaviour on future years — where severity 3 is currently absent — is **unproven** and
+  the direction of any further shift is unknown.
+- Geographic generalisation was measured on ten hash-held-out states, which are by
+  construction a fixed, non-random sample. A different seed yields a different ten states,
+  and the spread across seeds is not characterised.
 - Severity 4 F1 remains **0.30** (precision 0.27 / recall 0.33) — the rarest class is still hard.
-- Sampling uses `hash(ID, seed)` rather than `RANDOM()`, so a seed selects the same rows every run.
+- Sampling uses DuckDB's `hash(ID, seed)` rather than `RANDOM()`, so a seed selects the same rows every run.
 
 ---
 
@@ -664,16 +675,20 @@ guard was added to `save_models` so it cannot recur silently.
 
 1. **No geographic holdout** — **closed since the previous revision.** Implemented and
    measured; see §F. The result ruled out state memorisation.
-2. **One sklearn `UserWarning`** in `test_absent_class_still_appears_in_the_matrix` ("A single
-   label was found…"). The code already passes `labels=` explicitly; the warning comes from an
-   internal `classification_report` call. Benign, but noisy.
+2. ~~**One sklearn `UserWarning`** in `test_absent_class_still_appears_in_the_matrix` ("A single
+   label was found…").~~ — **closed.** The code already passed `labels=` explicitly and the
+   warning came from an internal `classification_report` call; suppressing the redundant
+   call removed it. The suite now runs with **0 warnings**, and the test still exercises the
+   path (it asserts a 4×4 matrix for a single-class `y_true`).
 3. **`variance_threshold_components` return type changed** from `int` to `int | None`. Internal
    helper with one caller; no external consumer.
 4. **`load_model_summary` swallows read errors.** A corrupt or unreadable summary returns `{}`,
    which makes trained models appear absent. Defensive, but it can mask a real problem — worth
    logging the reason.
-5. **The repository has no git remote.** 20 commits exist locally and nothing has been pushed.
-   Not a defect, but the history is only on this machine.
+5. ~~**The repository has no git remote.** 20 commits exist locally and nothing has been pushed.~~
+   — **closed.** The repository is now private on GitHub at
+   `github.com/amaan-ur-raheman/smart-traffic-analysis`, with GitHub Actions running lint,
+   tests and an app smoke test on every push.
 
 ### Closed since the previous revision
 
@@ -710,7 +725,7 @@ inspected:
 
 - The application launches and serves HTTP 200 / health `ok`.
 - `uv sync --locked` succeeds without re-resolving, so the environment is reproducible.
-- 379 tests pass; Ruff is clean.
+- 388 tests pass; Ruff is clean.
 - The original CSV's reference statistics were **independently recomputed** and matched
   exactly; the processed Parquet is faithful to the source.
 - Every derived feature, aggregation denominator, statistical metric, PCA quantity and
@@ -726,9 +741,9 @@ inspected:
 **Seven defects were found by this audit**, none covered by the original 338-test suite. Three
 produced false or misleading figures on screen; two broke a primary export; one crashed the
 app behind a redacted error; and one was a reproducibility defect in this audit's own new
-code, caught before its result was published. All are now fixed with regression tests (338 → 379).
+code, caught before its result was published. All are now fixed with regression tests (338 → 388).
 
-That six were found is itself the most important finding of this audit. It demonstrates
+That seven were found is itself the most important finding of this audit. It demonstrates
 concretely that "all tests pass" was never sufficient evidence of correctness here. Two of
 them (Bugs 5 and 6) lived behind a button and were invisible to a suite that only *rendered*
 pages — a limitation of the test strategy itself, now recorded in §I so it is not repeated.
